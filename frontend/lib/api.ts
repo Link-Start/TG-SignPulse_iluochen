@@ -226,6 +226,11 @@ export const checkAccountsStatus = (token: string, data: AccountStatusCheckReque
     body: JSON.stringify(data),
   }, token);
 
+export const triggerHealthCheck = (token: string) =>
+  request<{ success: boolean; message: string }>("/accounts/health-check", {
+    method: "POST",
+  }, token);
+
 export const deleteAccount = (token: string, accountName: string) =>
   request<{ success: boolean; message: string }>(`/accounts/${accountName}`, {
     method: "DELETE",

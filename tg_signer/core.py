@@ -4,6 +4,7 @@ import logging
 import os
 import pathlib
 import random
+import re
 import sqlite3
 import time
 import unicodedata
@@ -224,14 +225,18 @@ class Client(BaseClient):
                         if not self.is_connected:
                             await self.connect()
 
-                        try:
-                            await self.get_me()
-                        except Exception as e:
-                            # Prevent interactive login attempt
-                            raise ConnectionError(f"Session invalid: {e}")
-
+                        # start() 内部会完成 session 校验，直接捕获 auth 错误
+                        # 无需在 start() 前额外调 get_me()（避免双重 API 请求）
                         try:
                             await self.start()
+                        except (
+                            errors.Unauthorized,
+                            errors.AuthKeyUnregistered,
+                            errors.AuthKeyInvalid,
+                            errors.SessionRevoked,
+                            errors.SessionExpired,
+                        ) as e:
+                            raise ConnectionError(f"Session invalid: {e}")
                         except ConnectionError as e:
                             if "already connected" not in str(e).lower():
                                 raise
@@ -402,41 +407,35 @@ async def close_client_by_name(name: str, workdir: str | pathlib.Path = "."):
 
     # Check if we have a lock for this client
     lock = _CLIENT_ASYNC_LOCKS.get(key)
+    client_to_stop = None
     if lock:
-        # Acquire the lock to ensure we have exclusive access
-        # Note: This might block if a task is running.
-        # If we want to forceful kill, we might skip this, but that's dangerous.
-        # For deletion, waiting a moment is acceptable.
         try:
-            # Try to acquire with timeout to avoid deadlocks if something is stuck
             await asyncio.wait_for(lock.acquire(), timeout=5.0)
             try:
-                # Reset references to 0 to ensure proper cleanup
                 _CLIENT_REFS[key] = 0
+                # 在锁内弹出实例，阻止其他协程复用此 client
+                client_to_stop = _CLIENT_INSTANCES.pop(key, None)
             finally:
-                # Even if we manipulated refs, release the lock we just acquired
                 lock.release()
         except asyncio.TimeoutError:
             logger.warning(
                 f"Timeout waiting for lock on client {name}, proceeding with forceful cleanup"
             )
             _CLIENT_REFS[key] = 0
+            client_to_stop = _CLIENT_INSTANCES.pop(key, None)
+    else:
+        client_to_stop = _CLIENT_INSTANCES.pop(key, None)
 
-    client = _CLIENT_INSTANCES.get(key)
-    if client:
+    if client_to_stop:
         try:
-            if client.is_connected:
-                await client.stop()
+            if client_to_stop.is_connected:
+                await client_to_stop.stop()
         except Exception as e:
             logger.warning(f"Error stopping client {name}: {e}")
-        finally:
-            _CLIENT_INSTANCES.pop(key, None)
 
     # Clean up locks
-    if key in _CLIENT_ASYNC_LOCKS:
-        _CLIENT_ASYNC_LOCKS.pop(key, None)
-    if key in _CLIENT_REFS:
-        _CLIENT_REFS.pop(key, None)
+    _CLIENT_ASYNC_LOCKS.pop(key, None)
+    _CLIENT_REFS.pop(key, None)
 
 
 def get_now():
@@ -1228,17 +1227,10 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
     async def in_memory_run(
         self, num_of_dialogs=20, only_once: bool = False, force_rerun: bool = False
     ):
-        started_here = False
-        if not getattr(self.app, "is_connected", False):
-            await self.app.start()
-            started_here = True
-        try:
+        async with self.app:
             await self.normal_run(
                 num_of_dialogs, only_once=only_once, force_rerun=force_rerun
             )
-        finally:
-            if started_here:
-                await self.app.stop()
 
     async def normal_run(
         self, num_of_dialogs=20, only_once: bool = False, force_rerun: bool = False
@@ -1296,6 +1288,24 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
 
         try:
             while True:
+                # CLI 长期运行时重新加载配置，检测 chat_ids 变化并更新 handler
+                if not only_once:
+                    config = self.load_config(self.cfg_cls)
+                    new_chat_ids = [c.chat_id for c in config.chats]
+                    if new_chat_ids != chat_ids and message_handler_ref is not None:
+                        self.log(f"chat_ids 已变更，重新注册 message handlers: {new_chat_ids}")
+                        try:
+                            self.app.remove_handler(*message_handler_ref)
+                        except Exception:
+                            pass
+                        try:
+                            self.app.remove_handler(*edited_handler_ref)
+                        except Exception:
+                            pass
+                        message_handler_ref = None
+                        edited_handler_ref = None
+                    chat_ids = new_chat_ids
+
                 if need_update_handlers and message_handler_ref is None:
                     self.log(f"adding message handlers for chats: {chat_ids}")
                     message_handler_ref = self.app.add_handler(
@@ -1834,14 +1844,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         text = (message.text or message.caption or "").strip()
         if text:
             # Guard: skip bot timeout/error messages
-            import re as _re
-            for kw in self._BOT_ERROR_KEYWORDS:
-                if _re.search(kw, text, _re.IGNORECASE):
-                    self.log(
-                        f"消息内容疑似 Bot 超时/取消提示（匹配关键词: {kw!r}），跳过 AI 计算",
-                        level="WARNING",
-                    )
-                    return False
+            if self._BOT_ERROR_PATTERN.search(text):
+                self.log("消息内容疑似 Bot 超时/取消提示，跳过 AI 计算", level="WARNING")
+                return False
             self.log("检测到文本回复，尝试调用大模型进行计算题回答")
             self.log(f"问题: \n{text}")
             answer = await self.get_ai_tools().calculate_problem(text)
@@ -1874,12 +1879,10 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         await self.send_message(message.chat.id, text)
         return True
 
-    # Keywords that indicate a bot timeout / session-cancelled message rather than a real problem
-    _BOT_ERROR_KEYWORDS = (
-        "没有获取到您的输入",
-        "会话状态自动取消",
-        "session.*cancel",
-        "超时",
+    # 预编译正则：匹配 Bot 超时/取消提示，避免热路径内重复编译
+    _BOT_ERROR_PATTERN = re.compile(
+        "|".join(["没有获取到您的输入", "会话状态自动取消", r"session.*cancel", "超时"]),
+        re.IGNORECASE,
     )
 
     async def _click_button_by_calculation_problem(
@@ -1889,14 +1892,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         if not text:
             return False
         # Guard: if the bot sent a timeout/error notice instead of a real problem, skip AI call
-        import re as _re
-        for kw in self._BOT_ERROR_KEYWORDS:
-            if _re.search(kw, text, _re.IGNORECASE):
-                self.log(
-                    f"消息内容疑似 Bot 超时/取消提示（匹配关键词: {kw!r}），跳过 AI 计算",
-                    level="WARNING",
-                )
-                return False
+        if self._BOT_ERROR_PATTERN.search(text):
+            self.log("消息内容疑似 Bot 超时/取消提示，跳过 AI 计算", level="WARNING")
+            return False
         self.log("检测到计算题，尝试计算并点击按钮")
         answer = await self.get_ai_tools().calculate_problem(text)
         answer = (answer or "").strip()

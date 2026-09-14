@@ -110,7 +110,7 @@ class TelegramService:
                             else 0,
                             "remark": profile.get("remark"),
                             "proxy": profile.get("proxy"),
-                            **self._account_status_payload(account_name),
+                            # status 字段不存入缓存，每次返回时实时合并，防止缓存带 stale status
                         }
                     )
 
@@ -131,7 +131,6 @@ class TelegramService:
                             else 0,
                             "remark": profile.get("remark"),
                             "proxy": profile.get("proxy"),
-                            **self._account_status_payload(account_name),
                         }
                     )
             else:
@@ -152,13 +151,17 @@ class TelegramService:
                             else 0,
                             "remark": profile.get("remark"),
                             "proxy": profile.get("proxy"),
-                            **self._account_status_payload(account_name),
                         }
                     )
 
             self._accounts_cache = sorted(accounts, key=lambda x: x["name"])
-            return self._accounts_cache
+            # 统一在返回时合并实时 status，缓存本身只保存纯结构字段
+            return [
+                {**acc, **self._account_status_payload(acc.get("name", ""))}
+                for acc in self._accounts_cache
+            ]
         except Exception:
+            logger.exception("扫描账号列表失败")
             return []
 
     @staticmethod
@@ -294,19 +297,9 @@ class TelegramService:
         try:
             lock = get_account_lock(account_name)
             async with lock:
-                connected_here = False
-                if not getattr(client, "is_connected", False):
-                    await client.connect()
-                    connected_here = True
-                try:
+                # 使用上下文管理器，正确维护 _CLIENT_REFS 引用计数
+                async with client:
                     me = await asyncio.wait_for(client.get_me(), timeout=timeout_seconds)
-                finally:
-                    # 检查完毕后断开由本次检查建立的连接，避免 client 长期处于半连接状态
-                    if connected_here:
-                        try:
-                            await client.disconnect()
-                        except Exception:
-                            pass
             set_account_status(
                 account_name,
                 status="connected",
@@ -335,11 +328,30 @@ class TelegramService:
                 "needs_relogin": False,
             }
         except ConnectionError as e:
+            err_text = str(e)
+            # __aenter__ 在 session 失效时抛出 ConnectionError("Session invalid: ...")
+            if "session invalid" in err_text.lower():
+                set_account_status(
+                    account_name,
+                    status="invalid",
+                    message=err_text,
+                    code="ACCOUNT_SESSION_INVALID",
+                    needs_relogin=True,
+                )
+                return {
+                    "account_name": account_name,
+                    "ok": False,
+                    "status": "invalid",
+                    "message": err_text,
+                    "code": "ACCOUNT_SESSION_INVALID",
+                    "checked_at": checked_at,
+                    "needs_relogin": True,
+                }
             return {
                 "account_name": account_name,
                 "ok": False,
                 "status": "checking",
-                "message": str(e),
+                "message": err_text,
                 "code": "CONNECTION_ERROR",
                 "checked_at": checked_at,
                 "needs_relogin": False,

@@ -455,6 +455,21 @@ async def check_accounts_status(
         )
 
 
+@router.post("/health-check")
+async def trigger_health_check(current_user: User = Depends(get_current_user)):
+    """手动触发一次账号健康巡检，与定时巡检逻辑相同。"""
+    from backend.scheduler import _job_health_check_accounts
+
+    try:
+        await _job_health_check_accounts()
+        return {"success": True, "message": "巡检完成"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"巡检失败: {e!s}",
+        )
+
+
 @router.delete("/{account_name}", response_model=DeleteAccountResponse)
 async def delete_account(
     account_name: str, current_user: User = Depends(get_current_user)

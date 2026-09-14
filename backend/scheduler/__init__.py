@@ -147,7 +147,8 @@ def _schedule_range_random_run(account_name: str, task_name: str, st: dict) -> N
 
         delay = random.uniform(0, remaining)
         run_at = now + timedelta(seconds=delay)
-        job_id = f"sign-{account_name}-{task_name}-catchup"
+        # 使用独立 job_id，避免与 schedule_range_catchup 的补执行任务互相覆盖
+        job_id = f"sign-{account_name}-{task_name}-range-run"
 
         scheduler.add_job(
             _job_run_sign_task,
@@ -162,6 +163,50 @@ def _schedule_range_random_run(account_name: str, task_name: str, st: dict) -> N
         )
     except Exception as e:
         logger.warning("range 随机调度失败 %s: %s", task_name, e)
+
+
+async def _job_health_check_accounts() -> None:
+    """定期巡检所有账号 session 是否有效，发现失效立即推送通知。"""
+    from backend.services.sign_tasks import get_sign_task_service
+    from backend.services.telegram import get_telegram_service
+
+    telegram_service = get_telegram_service()
+    sign_task_service = get_sign_task_service()
+
+    accounts = telegram_service.list_accounts()
+    if not accounts:
+        return
+
+    logger.info("开始账号健康巡检，共 %d 个账号", len(accounts))
+    invalid_count = 0
+    for account in accounts:
+        account_name = account.get("name")
+        if not account_name:
+            continue
+        if account.get("status") == "invalid" and account.get("needs_relogin"):
+            invalid_count += 1
+            logger.debug("账号 %s 已标记失效，跳过网络巡检", account_name)
+            continue
+        try:
+            result = await telegram_service.check_account_status(account_name)
+            if result.get("ok"):
+                logger.debug("账号 %s 巡检正常", account_name)
+            elif result.get("needs_relogin"):
+                invalid_count += 1
+                await sign_task_service._mark_account_invalid(
+                    account_name,
+                    "定期巡检",
+                    result.get("message") or "Session 已失效，请重新登录",
+                )
+                logger.warning("账号 %s 巡检发现 session 失效，已发送通知", account_name)
+            else:
+                logger.info(
+                    "账号 %s 巡检状态: %s (非失效，忽略)", account_name, result.get("status")
+                )
+        except Exception:
+            logger.exception("巡检账号 %s 时发生异常", account_name)
+
+    logger.info("账号健康巡检完成，发现 %d 个失效账号", invalid_count)
 
 
 async def _job_maintenance() -> None:
@@ -309,26 +354,22 @@ async def sync_jobs() -> None:
 
                 # range 模式：CRON 触发时只负责安排随机 DateTrigger，不直接执行
                 cron_callback = _schedule_range_random_run if is_range else _job_run_sign_task
-                cron_args = [account_name, task_name, st] if is_range else [account_name, task_name]
-
-                if job_id in existing_ids:
-                    scheduler.reschedule_job(job_id, trigger=trigger)
-                    # 更新回调（reschedule 不更新 func/args，需要重新 add）
-                    scheduler.add_job(
-                        cron_callback,
-                        trigger=trigger,
-                        id=job_id,
-                        args=cron_args,
-                        replace_existing=True,
-                    )
+                if is_range:
+                    # 传轻量副本，防止 job 长期持有可变的大 dict 引用
+                    cron_args = [account_name, task_name, {
+                        "range_start": st.get("range_start"),
+                        "range_end": st.get("range_end"),
+                    }]
                 else:
-                    scheduler.add_job(
-                        cron_callback,
-                        trigger=trigger,
-                        id=job_id,
-                        args=cron_args,
-                        replace_existing=True,
-                    )
+                    cron_args = [account_name, task_name]
+
+                scheduler.add_job(
+                    cron_callback,
+                    trigger=trigger,
+                    id=job_id,
+                    args=cron_args,
+                    replace_existing=True,
+                )
 
                 # 若 range 模式且当前处于窗口内、今日未执行，补一次立即执行
                 if is_range:
@@ -364,6 +405,14 @@ async def init_scheduler(sync_on_startup: bool = True) -> AsyncIOScheduler:
             _job_maintenance,
             trigger=CronTrigger.from_crontab("0 3 * * *"),
             id="system-maintenance",
+            replace_existing=True,
+        )
+
+        # 添加每日 9 点执行的账号健康巡检
+        scheduler.add_job(
+            _job_health_check_accounts,
+            trigger=CronTrigger.from_crontab("0 9 * * *"),
+            id="system-health-check",
             replace_existing=True,
         )
 
@@ -403,7 +452,10 @@ def add_or_update_sign_task_job(
         is_range = task_config and task_config.get("execution_mode") == "range"
         if is_range:
             callback = _schedule_range_random_run
-            args = [account_name, task_name, task_config]
+            args = [account_name, task_name, {
+                "range_start": task_config.get("range_start"),
+                "range_end": task_config.get("range_end"),
+            }]
         else:
             callback = _job_run_sign_task
             args = [account_name, task_name]

@@ -161,7 +161,54 @@ frontend/     Next.js 管理面板
 
 ## 更新日志
 
-### 2026-09-14
+### 2026-09-15（逻辑优化）
+
+- **执行日志截断生效**：`SIGN_TASK_HISTORY_MAX_FLOW_LINES`（默认 5000 行）与 `SIGN_TASK_HISTORY_MAX_LINE_CHARS`（默认 2000 字符）此前只读取未生效，现已真正截断（保留尾部日志），防止历史文件无限膨胀。
+- **巡检跳过已失效账号**：已标记为需重新登录的账号不再重复发起 Telegram 连接，减少无效请求。
+- **通知逻辑合并**：成功 / 失败 / 账号失效三类 Bot 通知共用一个发送方法，消除约 60 行重复代码。
+- **Chat 缓存原子写入**：`chats_cache.json` 及 legacy 历史文件改为原子替换写入，崩溃不再损坏文件。
+- **账号锁统一**：移除服务内冗余的锁字典，统一使用全局 `get_account_lock()`。
+- **日志规范**：任务异常堆栈改走 `logger.exception`，不再直接打印到 stderr；清理残留乱码注释。
+- **仓库地址更新**：登录页与设置页的 GitHub 图标链接改为 [loochenx/TG-SignPulse](https://github.com/loochenx/TG-SignPulse)。
+
+### 2026-09-15（账号健康巡检）
+
+- **新增定时账号健康巡检**：每天 09:00 自动检测所有账号 session 是否有效，发现失效立即通过 Telegram Bot 推送通知，无需等到签到任务失败才知道。
+- **新增手动触发巡检**：账号页面顶部导航栏新增「巡检」按钮（💓图标），点击立即对所有账号执行一次检测并刷新状态。
+- **通知去重**：同一账号已推送失效通知后，再次巡检不重复通知；账号重新登录恢复正常后，下次失效时会重新发送通知。
+
+### 2026-09-14（第三轮代码审查修复）
+
+- **修复 `_load_history_entries` 死代码条件**：`account_name and X or not account_name and X` 恒等于 `X`，`account_name` 判断完全无效，已简化为 `if legacy_file.exists()`，消除维护误解隐患。
+- **修复 `in_memory_run` 绕过生命周期管理**：从直接调 `await self.app.start()` 改为 `async with self.app:`，确保 `_CLIENT_REFS` 引用计数正确维护，且 session 失效时统一抛出 `ConnectionError("Session invalid: ...")`，行为与其他连接路径一致。
+- **历史文件写入改为原子替换**：`_save_run_info` 中 `history_file` 写入现在也使用 `tempfile + os.replace`，进程崩溃不再截断历史记录。
+- **提取 `_atomic_write_json` 辅助方法**：`create_task`、`update_task`、`set_task_enabled`、`clear_account_history_logs` 中所有 `config.json` 写入统一走原子替换，消除非原子写入的数据损坏风险，代码也更简洁。
+- **修复 `_active_logs.setdefault` 类型错误**：fallback 值从 `list` 改为 `deque(maxlen=1000)`，与其他日志缓冲区类型一致。
+- **修复乱码 docstring**：`clear_account_history_logs` 函数注释修正为正确的简体中文。
+
+### 2026-09-14（第二轮代码审查修复）
+
+- **修复日志过滤器子串误判**：`_AccountTaskLogFilter` 改为匹配完整账号前缀 `账户「{name}」`，防止账号名是另一账号名子串时日志仍然交叉污染。
+- **修复 `check_account_status` 误判 session 失效**：`except ConnectionError` 分支新增 "session invalid" 检测，session 失效时正确返回 `needs_relogin=True`，不再被当成临时网络错误放行。
+- **移除 `refresh_account_chats` 重复 `get_me()` 调用**：`__aenter__` 已完成 session 校验，删除多余的显式调用。
+- **修复 `__aenter__` 双重 `get_me()`**：去掉 `start()` 前的预检 `get_me()`，改为从 `start()` 直接捕获 auth 错误（`Unauthorized`/`AuthKeyInvalid` 等），消除每次首次连接多一次 API 请求的问题。
+- **`_save_run_info` 写 config.json 改为原子替换**：先写临时文件再 `os.replace`，防止进程崩溃导致配置损坏、`last_run` 错乱。
+- **区分 range-run 与 catchup 的 job_id**：`_schedule_range_random_run` 改用 `-range-run` 后缀，避免任务编辑时 catchup 覆盖今天已计算好的随机执行时间。
+- **`list_accounts` 缓存不再保存实时 status 字段**：缓存只存结构字段，每次返回时实时合并 status，消除缓存中 stale status 被其他代码读到的隐患。
+- **`normal_run()` 支持 chat_ids 热更新**：CLI 长期运行时每轮迭代重新加载配置，若 chat_ids 变化则自动重新注册 handler，无需重启。
+
+### 2026-09-14（代码质量优化）
+
+- **优化并发日志隔离**：为 `TaskLogHandler` 新增 `_AccountTaskLogFilter`，多账号并发执行时日志不再交叉污染。
+- **修复任务状态内存泄漏**：`_active_tasks` 任务结束后改用 `.pop()` 而非 `= False`，避免长期运行后 dict 无限增长。
+- **优化日志缓冲**：`_active_logs` 改用 `deque(maxlen=1000)`，截断旧日志由 O(n) 降为 O(1)。
+- **修复 `close_client_by_name` 竞争窗口**：在持锁期间弹出 client 实例，消除锁外 stop 导致正在启动的连接被断开的问题。
+- **修复 `check_account_status` 引用计数绕过**：改用 `async with client:` 上下文管理器，正确维护 `_CLIENT_REFS`。
+- **清理调度器死代码**：`sync_jobs` 中 `reschedule_job` 立刻被 `add_job(replace_existing=True)` 覆盖，已移除冗余调用。
+- **修复调度器 job 持有过期 dict 引用**：range 模式向 APScheduler 传入只含 `range_start/range_end` 的轻量副本，任务更新后不再引用旧配置。
+- **其他**：预编译 `_BOT_ERROR_PATTERN` 正则、`_save_run_info` 中去掉多余的 `get_task()` 磁盘读取、`list_accounts` 异常改为 `logger.exception` 记录。
+
+### 2026-09-14（Bug 修复）
 
 - **修复任务长期运行后无法执行**：消息处理器在异常退出时未从共享 Client 移除，导致每次失败都累积处理器；改用 `try/finally` 保证始终清理。
 - **修复 session 失效误判**：`check_account_status` 中的宽泛字符串匹配 (`"SESSION" and "INVALID"`) 会将 Pyrogram 内部异常误判为 session 失效，导致账号被永久写入 `needs_relogin=True`；改为精确匹配 Telegram API 错误码。

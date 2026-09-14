@@ -18,6 +18,7 @@ import {
   getAccountLogs,
   clearAccountLogs,
   listSignTasks,
+  triggerHealthCheck,
   AccountInfo,
   AccountStatusItem,
   AccountLog,
@@ -33,7 +34,8 @@ import {
   X,
   PencilSimple,
   PaperPlaneRight,
-  Trash
+  Trash,
+  Heartbeat
 } from "@phosphor-icons/react";
 import { ToastContainer, useToast } from "../../components/ui/toast";
 import { ThemeLanguageToggle } from "../../components/ThemeLanguageToggle";
@@ -205,6 +207,21 @@ export default function Dashboard() {
     setLoginMode("phone");
     setLoginData({ ...EMPTY_LOGIN_DATA });
     setShowAddDialog(true);
+  };
+
+  const [healthChecking, setHealthChecking] = useState(false);
+  const handleHealthCheck = async () => {
+    if (!token || healthChecking) return;
+    setHealthChecking(true);
+    try {
+      await triggerHealthCheck(token);
+      addToast("巡检完成", "success");
+      if (token) await loadData(token);
+    } catch {
+      addToast("巡检失败，请稍后重试", "error");
+    } finally {
+      setHealthChecking(false);
+    }
   };
 
   const handleStartLogin = async () => {
@@ -848,6 +865,14 @@ export default function Dashboard() {
         </div>
         <div className="top-right-actions">
           <ThemeLanguageToggle />
+          <button
+            className="action-btn"
+            title="立即巡检所有账号"
+            onClick={handleHealthCheck}
+            disabled={healthChecking}
+          >
+            {healthChecking ? <Spinner className="animate-spin" /> : <Heartbeat weight="bold" />}
+          </button>
           <Link href="/dashboard/settings" title={t("sidebar_settings")} className="action-btn">
             <Gear weight="bold" />
           </Link>

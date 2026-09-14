@@ -9,8 +9,9 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 import time
-import traceback
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,22 +37,30 @@ logger = logging.getLogger("backend.sign_tasks")
 
 class TaskLogHandler(logging.Handler):
     """
-    自定义日志处理器，将日志实时写入到内存列表中
+    自定义日志处理器，将日志实时写入到内存 deque 中
     """
 
-    def __init__(self, log_list: list[str]):
+    def __init__(self, log_deque: deque):
         super().__init__()
-        self.log_list = log_list
+        self.log_list = log_deque
 
     def emit(self, record):
         try:
-            msg = self.format(record)
-            self.log_list.append(msg)
-            # 保持日志长度，避免内存占用过大
-            if len(self.log_list) > 1000:
-                self.log_list.pop(0)
+            self.log_list.append(self.format(record))
         except Exception:
             self.handleError(record)
+
+
+class _AccountTaskLogFilter(logging.Filter):
+    """只保留包含指定账号名的日志，防止并发任务日志交叉污染"""
+
+    def __init__(self, account_name: str):
+        super().__init__()
+        self._account_name = account_name
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # log() 格式固定为 "账户「{account}」- 任务「{task}」:"，精确匹配防止子串误判
+        return f"账户「{self._account_name}」" in record.getMessage()
 
 
 class BackendUserSigner(UserSigner):
@@ -108,11 +117,10 @@ class SignTaskService:
         self.signs_dir.mkdir(parents=True, exist_ok=True)
         self.run_history_dir.mkdir(parents=True, exist_ok=True)
         logger.debug("初始化 SignTaskService signs_dir=%s", self.signs_dir)
-        self._active_logs: dict[tuple[str, str], list[str]] = {}  # (account, task) -> logs
+        self._active_logs: dict[tuple[str, str], deque] = {}  # (account, task) -> logs
         self._active_tasks: dict[tuple[str, str], bool] = {}  # (account, task) -> running
         self._cleanup_tasks: dict[tuple[str, str], asyncio.Task] = {}
         self._tasks_cache = None  # 内存缓存
-        self._account_locks: dict[str, asyncio.Lock] = {}  # 账号锁
         self._account_last_run_end: dict[str, float] = {}  # 账号最后一次结束时间
         self._account_cooldown_seconds = int(
             os.getenv("SIGN_TASK_ACCOUNT_COOLDOWN", "5")
@@ -312,11 +320,19 @@ class SignTaskService:
             return [], False, 0
 
         total = len(flow_logs)
+        max_lines = self._history_max_flow_lines
+        max_chars = self._history_max_line_chars
+        truncated = total > max_lines
+        # 保留尾部：失败原因通常出现在最后几行
+        source = flow_logs[-max_lines:] if truncated else flow_logs
         trimmed: list[str] = []
-        for line in flow_logs:
+        for line in source:
             text = self._repair_mojibake(str(line)).replace("\r", "").rstrip("\n")
+            if len(text) > max_chars:
+                text = text[: max_chars - 3] + "..."
+                truncated = True
             trimmed.append(text)
-        return trimmed, False, total
+        return trimmed, truncated, total
 
     def _load_history_entries(
         self, task_name: str, account_name: str = ""
@@ -325,7 +341,7 @@ class SignTaskService:
         legacy_file = self.run_history_dir / f"{self._safe_history_key(task_name)}.json"
 
         if not history_file.exists():
-            if account_name and legacy_file.exists() or not account_name and legacy_file.exists():
+            if legacy_file.exists():
                 history_file = legacy_file
             else:
                 return []
@@ -441,7 +457,7 @@ class SignTaskService:
         return all_history
 
     def clear_account_history_logs(self, account_name: str) -> dict[str, int]:
-        """娓呯悊鏌愯处鍙风殑鍘嗗彶鏃ュ織锛屼笉褰卞搷鍏朵粬璐﹀彿"""
+        """清理某账号的历史日志，不影响其他账号"""
         removed_files = 0
         removed_entries = 0
 
@@ -468,13 +484,11 @@ class SignTaskService:
             config_file = task_dir / "config.json"
             if config_file.exists():
                 try:
-                    import json
                     with open(config_file, "r", encoding="utf-8") as f:
                         config = json.load(f)
                     if "last_run" in config:
                         del config["last_run"]
-                        with open(config_file, "w", encoding="utf-8") as f:
-                            json.dump(config, f, ensure_ascii=False, indent=2)
+                        self._atomic_write_json(config_file, config)
                 except Exception:
                     pass
 
@@ -523,7 +537,7 @@ class SignTaskService:
                     pass
                 continue
 
-            # legacy 鏂囦欢鍙兘娌℃湁 account_name 锛屾槸鏃х増鍗曡处鍙峰湺鏅?
+            # legacy 文件可能没有 account_name，是旧版单账号场景
             has_account_field = any(
                 isinstance(item, dict) and "account_name" in item for item in data_list
             )
@@ -553,8 +567,7 @@ class SignTaskService:
                     pass
             else:
                 try:
-                    with open(legacy_file, "w", encoding="utf-8") as f:
-                        json.dump(kept, f, ensure_ascii=False, indent=2)
+                    self._atomic_write_json(legacy_file, kept)
                 except Exception:
                     pass
 
@@ -629,32 +642,22 @@ class SignTaskService:
         history = history[: self._history_max_entries]
 
         try:
-            with open(history_file, "w", encoding="utf-8") as f:
-                json.dump(history, f, ensure_ascii=False, indent=2)
+            self._atomic_write_json(history_file, history)
 
             # 同时更新任务配置中的 last_run
-            # 1. 更新磁盘上的 config.json
-            task = self.get_task(task_name, account_name)
-            if task:
-                # 注意 get_task 返回的是 dict，我们需要路径
-                # 重新构建路径或复用逻辑
-                # 这里为了简单，再次查找路径有点低效，但比全量扫描好
-                # 我们可以利用 self.signs_dir / account_name / task_name
-                # 但考虑到兼容性，还是得稍微判断下
-                task_dir = self.signs_dir / account_name / task_name
-                if not task_dir.exists():
-                    task_dir = self.signs_dir / task_name
-
-                config_file = task_dir / "config.json"
-                if config_file.exists():
-                    try:
-                        with open(config_file, "r", encoding="utf-8") as f:
-                            config = json.load(f)
-                        config["last_run"] = new_entry
-                        with open(config_file, "w", encoding="utf-8") as f:
-                            json.dump(config, f, ensure_ascii=False, indent=2)
-                    except Exception as e:
-                        logger.warning("更新任务配置 last_run 失败: %s", e)
+            # 1. 更新磁盘上的 config.json（直接构造路径，避免调用 get_task 多读一次磁盘）
+            task_dir = self.signs_dir / account_name / task_name
+            if not task_dir.exists():
+                task_dir = self.signs_dir / task_name
+            config_file = task_dir / "config.json"
+            if config_file.exists():
+                try:
+                    with open(config_file, "r", encoding="utf-8") as f:
+                        config = json.load(f)
+                    config["last_run"] = new_entry
+                    self._atomic_write_json(config_file, config)
+                except Exception as e:
+                    logger.warning("更新任务配置 last_run 失败: %s", e)
 
             # 2. 更新内存缓存 (关键优化：避免置空 self._tasks_cache)
             if self._tasks_cache is not None:
@@ -665,6 +668,21 @@ class SignTaskService:
 
         except Exception as e:
             logger.warning("保存运行信息失败: %s", e)
+
+    @staticmethod
+    def _atomic_write_json(path: Path, data: Any) -> None:
+        """原子写入 JSON 文件：先写临时文件再 os.replace，防止崩溃导致文件损坏。"""
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as tf:
+                json.dump(data, tf, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def _append_scheduler_log(self, filename: str, message: str) -> None:
         try:
@@ -692,20 +710,17 @@ class SignTaskService:
             pass
         return None
 
-    async def _send_success_notification(
-        self,
-        account_name: str,
-        task_name: str,
-        message: str,
-        flow_logs: list[str] | None = None,
+    async def _send_bot_notification(
+        self, text: str, switch_key: str | None = None, switch_default: bool = True
     ) -> None:
+        """统一发送 Bot 通知；switch_key 为该类通知的独立开关（None 表示只受总开关控制）。"""
         try:
             from backend.services.config import get_config_service
 
             cfg = get_config_service().get_global_settings()
             if not cfg.get("telegram_bot_notify_enabled"):
                 return
-            if not cfg.get("telegram_bot_task_success_enabled", False):
+            if switch_key and not cfg.get(switch_key, switch_default):
                 return
             bot_token = (cfg.get("telegram_bot_token") or "").strip()
             chat_id = (cfg.get("telegram_bot_chat_id") or "").strip()
@@ -721,13 +736,6 @@ class SignTaskService:
             except (TypeError, ValueError):
                 message_thread_id = None
 
-            text = (
-                "✅ 签到成功\n"
-                f"账号: {account_name}\n"
-                f"任务: {task_name}"
-            )
-            if message:
-                text += f"\n回复: {message}"
             from backend.services.push_notifications import send_telegram_bot_message
 
             await send_telegram_bot_message(
@@ -737,9 +745,17 @@ class SignTaskService:
                 message_thread_id=message_thread_id,
             )
         except Exception as e:
-            logging.getLogger("backend.sign_tasks").warning(
-                "Failed to send Telegram success notification: %s", e
-            )
+            logger.warning("发送 Telegram Bot 通知失败: %s", e)
+
+    async def _send_success_notification(
+        self, account_name: str, task_name: str, message: str
+    ) -> None:
+        text = f"✅ 签到成功\n账号: {account_name}\n任务: {task_name}"
+        if message:
+            text += f"\n回复: {message}"
+        await self._send_bot_notification(
+            text, "telegram_bot_task_success_enabled", switch_default=False
+        )
 
     async def _send_failure_notification(
         self,
@@ -748,95 +764,30 @@ class SignTaskService:
         message: str,
         flow_logs: list[str] | None = None,
     ) -> None:
-        try:
-            from backend.services.config import get_config_service
-
-            cfg = get_config_service().get_global_settings()
-            if not cfg.get("telegram_bot_notify_enabled"):
-                return
-            if not cfg.get("telegram_bot_task_failure_enabled", True):
-                return
-            bot_token = (cfg.get("telegram_bot_token") or "").strip()
-            chat_id = (cfg.get("telegram_bot_chat_id") or "").strip()
-            if not bot_token or not chat_id:
-                return
-            message_thread_id = cfg.get("telegram_bot_message_thread_id")
-            try:
-                message_thread_id = (
-                    int(message_thread_id)
-                    if message_thread_id is not None and str(message_thread_id).strip()
-                    else None
-                )
-            except (TypeError, ValueError):
-                message_thread_id = None
-
-            log_tail = "\n".join((flow_logs or [])[-20:])
-            text = (
-                "TG-SignPulse 任务执行失败\n"
-                f"账号: {account_name}\n"
-                f"任务: {task_name}\n"
-                f"错误: {message or '未知错误'}"
-            )
-            if log_tail:
-                text += f"\n\n最近日志:\n{log_tail}"
-            from backend.services.push_notifications import send_telegram_bot_message
-
-            await send_telegram_bot_message(
-                bot_token=bot_token,
-                chat_id=chat_id,
-                text=text,
-                message_thread_id=message_thread_id,
-            )
-        except Exception as e:
-            logging.getLogger("backend.sign_tasks").warning(
-                "Failed to send Telegram failure notification: %s", e
-            )
+        text = (
+            "TG-SignPulse 任务执行失败\n"
+            f"账号: {account_name}\n"
+            f"任务: {task_name}\n"
+            f"错误: {message or '未知错误'}"
+        )
+        log_tail = "\n".join((flow_logs or [])[-20:])
+        if log_tail:
+            text += f"\n\n最近日志:\n{log_tail}"
+        await self._send_bot_notification(
+            text, "telegram_bot_task_failure_enabled", switch_default=True
+        )
 
     async def _send_account_invalid_notification(
-        self,
-        account_name: str,
-        task_name: str,
-        message: str,
+        self, account_name: str, task_name: str, message: str
     ) -> None:
-        try:
-            from backend.services.config import get_config_service
-
-            cfg = get_config_service().get_global_settings()
-            if not cfg.get("telegram_bot_notify_enabled"):
-                return
-            bot_token = (cfg.get("telegram_bot_token") or "").strip()
-            chat_id = (cfg.get("telegram_bot_chat_id") or "").strip()
-            if not bot_token or not chat_id:
-                return
-            message_thread_id = cfg.get("telegram_bot_message_thread_id")
-            try:
-                message_thread_id = (
-                    int(message_thread_id)
-                    if message_thread_id is not None and str(message_thread_id).strip()
-                    else None
-                )
-            except (TypeError, ValueError):
-                message_thread_id = None
-
-            text = (
-                "TG-SignPulse 账号登录失效\n"
-                f"账号: {account_name}\n"
-                f"触发任务: {task_name}\n"
-                f"原因: {message or 'session 已失效，请重新登录'}\n\n"
-                "该账号下的任务已跳过。"
-            )
-            from backend.services.push_notifications import send_telegram_bot_message
-
-            await send_telegram_bot_message(
-                bot_token=bot_token,
-                chat_id=chat_id,
-                text=text,
-                message_thread_id=message_thread_id,
-            )
-        except Exception as e:
-            logging.getLogger("backend.sign_tasks").warning(
-                "Failed to send Telegram account invalid notification: %s", e
-            )
+        text = (
+            "TG-SignPulse 账号登录失效\n"
+            f"账号: {account_name}\n"
+            f"触发任务: {task_name}\n"
+            f"原因: {message or 'session 已失效，请重新登录'}\n\n"
+            "该账号下的任务已跳过。"
+        )
+        await self._send_bot_notification(text)
 
     async def _mark_account_invalid(
         self,
@@ -1100,8 +1051,7 @@ class SignTaskService:
         config_file = task_dir / "config.json"
 
         try:
-            with open(config_file, "w", encoding="utf-8") as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
+            self._atomic_write_json(config_file, config)
         except Exception as e:
             logger.error("写入配置文件失败: %s", e)
             raise
@@ -1199,8 +1149,7 @@ class SignTaskService:
             task_dir = self.signs_dir / task_name
 
         config_file = task_dir / "config.json"
-        with open(config_file, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
+        self._atomic_write_json(config_file, config)
 
         # Invalidate cache
         self._tasks_cache = None
@@ -1266,8 +1215,7 @@ class SignTaskService:
             raise ValueError(f"读取任务配置失败: {e}")
 
         config["enabled"] = bool(enabled)
-        with open(config_file, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
+        self._atomic_write_json(config_file, config)
 
         # Invalidate cache
         self._tasks_cache = None
@@ -1521,19 +1469,12 @@ class SignTaskService:
         chats: list[dict[str, Any]] = []
         logger = logging.getLogger("backend")
         try:
-            # 初始化账号锁（跨服务共享）
-            if account_name not in self._account_locks:
-                self._account_locks[account_name] = get_account_lock(account_name)
-
-            account_lock = self._account_locks[account_name]
+            account_lock = get_account_lock(account_name)
 
             async def _fetch_chats(active_client) -> list[dict[str, Any]]:
                 local_chats: list[dict[str, Any]] = []
-                # 使用上下文管理器处理生命周期和锁
+                # __aenter__ 内已完成 session 有效性校验，无需再调 get_me()
                 async with account_lock, get_global_semaphore(), active_client:
-                            # 尝试获取用户信息，如果失败说明 session 无效
-                            await active_client.get_me()
-
                             try:
                                 async for dialog in active_client.get_dialogs():
                                     try:
@@ -1617,8 +1558,7 @@ class SignTaskService:
             cache_file = account_dir / "chats_cache.json"
 
             try:
-                with open(cache_file, "w", encoding="utf-8") as f:
-                    json.dump(chats, f, ensure_ascii=False, indent=2)
+                self._atomic_write_json(cache_file, chats)
             except Exception as e:
                 logger.warning("保存 Chat 缓存失败: %s", e)
 
@@ -1683,29 +1623,22 @@ class SignTaskService:
     ) -> dict[str, Any]:
         """运行任务并实时捕获日志 (In-Process)"""
 
-        if self.is_task_running(task_name, account_name):
+        # 原子占位：check-and-set 合并，避免并发任务覆盖彼此的日志缓冲
+        task_key = self._task_key(account_name, task_name)
+        if self._active_tasks.get(task_key):
             return {"success": False, "error": "任务已经在运行中", "output": ""}
+        self._active_tasks[task_key] = True
+        self._active_logs[task_key] = deque(maxlen=1000)
 
-        # 初始化账号锁（跨服务共享）
-        if account_name not in self._account_locks:
-            self._account_locks[account_name] = get_account_lock(account_name)
-
-        account_lock = self._account_locks[account_name]
-
-        # 检查是否能获取锁 (非阻塞检查，如果已被锁定则说明该账号有其他任务在运行)
-        # 这里我们希望排队等待，还是直接报错？
-        # 考虑到定时任务同时触发，应该排队执行。
+        account_lock = get_account_lock(account_name)
         logger.debug("等待获取账号锁 %s", account_name)
 
-        task_key = self._task_key(account_name, task_name)
-        self._active_tasks[task_key] = True
-        self._active_logs[task_key] = []
-
-        # 获取 logger 实例
+        # 挂载日志处理器，过滤器防止多账号并发时日志交叉污染
         tg_logger = logging.getLogger("tg-signer")
         log_handler = TaskLogHandler(self._active_logs[task_key])
         log_handler.setLevel(logging.INFO)
         log_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+        log_handler.addFilter(_AccountTaskLogFilter(account_name))
         tg_logger.addHandler(log_handler)
 
         success = False
@@ -1864,12 +1797,10 @@ class SignTaskService:
                 )
             error_msg = f"任务执行出错: {e!s}"
             self._active_logs[task_key].append(error_msg)
-            # 打印堆栈以便调试
-            traceback.print_exc()
-            logger.error(error_msg)
+            logger.exception(error_msg)
         finally:
             self._account_last_run_end[account_name] = time.time()
-            self._active_tasks[task_key] = False
+            self._active_tasks.pop(task_key, None)
             tg_logger.removeHandler(log_handler)
 
             # 保存执行记录
@@ -1921,7 +1852,7 @@ class SignTaskService:
                         success = False
                         error_msg = f"机器人回复疑似失败: {last_reply}"
                         final_logs.append(error_msg)
-                        self._active_logs.setdefault(task_key, []).append(error_msg)
+                        self._active_logs.setdefault(task_key, deque(maxlen=1000)).append(error_msg)
                         output_str = "\n".join(final_logs)
 
             msg = error_msg if not success else last_reply
@@ -1941,12 +1872,7 @@ class SignTaskService:
                     flow_logs=final_logs,
                 )
             elif success:
-                await self._send_success_notification(
-                    account_name,
-                    task_name,
-                    msg,
-                    flow_logs=final_logs,
-                )
+                await self._send_success_notification(account_name, task_name, msg)
 
             # 延迟清理日志（同一 task_key 仅保留一个 cleanup 协程）
             old_cleanup_task = self._cleanup_tasks.get(task_key)
@@ -1956,6 +1882,8 @@ class SignTaskService:
             async def cleanup():
                 try:
                     await asyncio.sleep(60)
+                    # 若同一 task_key 在延迟窗口内重新启动，_active_tasks 会被重新设为 True，
+                    # 此时跳过清理，避免把新任务的日志缓冲区抹掉
                     if not self._active_tasks.get(task_key):
                         self._active_logs.pop(task_key, None)
                 finally:
