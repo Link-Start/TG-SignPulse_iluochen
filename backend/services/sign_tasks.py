@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from backend.core.config import get_settings
 from backend.utils.account_locks import get_account_lock
@@ -39,7 +39,7 @@ class TaskLogHandler(logging.Handler):
     自定义日志处理器，将日志实时写入到内存列表中
     """
 
-    def __init__(self, log_list: List[str]):
+    def __init__(self, log_list: list[str]):
         super().__init__()
         self.log_list = log_list
 
@@ -108,12 +108,12 @@ class SignTaskService:
         self.signs_dir.mkdir(parents=True, exist_ok=True)
         self.run_history_dir.mkdir(parents=True, exist_ok=True)
         logger.debug("初始化 SignTaskService signs_dir=%s", self.signs_dir)
-        self._active_logs: Dict[tuple[str, str], List[str]] = {}  # (account, task) -> logs
-        self._active_tasks: Dict[tuple[str, str], bool] = {}  # (account, task) -> running
-        self._cleanup_tasks: Dict[tuple[str, str], asyncio.Task] = {}
+        self._active_logs: dict[tuple[str, str], list[str]] = {}  # (account, task) -> logs
+        self._active_tasks: dict[tuple[str, str], bool] = {}  # (account, task) -> running
+        self._cleanup_tasks: dict[tuple[str, str], asyncio.Task] = {}
         self._tasks_cache = None  # 内存缓存
-        self._account_locks: Dict[str, asyncio.Lock] = {}  # 账号锁
-        self._account_last_run_end: Dict[str, float] = {}  # 账号最后一次结束时间
+        self._account_locks: dict[str, asyncio.Lock] = {}  # 账号锁
+        self._account_last_run_end: dict[str, float] = {}  # 账号最后一次结束时间
         self._account_cooldown_seconds = int(
             os.getenv("SIGN_TASK_ACCOUNT_COOLDOWN", "5")
         )
@@ -129,7 +129,7 @@ class SignTaskService:
         self._cleanup_old_logs()
 
     @staticmethod
-    def _task_requires_updates(task_config: Optional[Dict[str, Any]]) -> bool:
+    def _task_requires_updates(task_config: dict[str, Any] | None) -> bool:
         """
         判断任务是否依赖 update handlers。
         """
@@ -157,7 +157,7 @@ class SignTaskService:
         return False
 
     @staticmethod
-    def _task_has_keyword_monitor(task_config: Optional[Dict[str, Any]]) -> bool:
+    def _task_has_keyword_monitor(task_config: dict[str, Any] | None) -> bool:
         if not isinstance(task_config, dict):
             return False
         for chat in task_config.get("chats") or []:
@@ -198,7 +198,7 @@ class SignTaskService:
             return self.run_history_dir / f"{safe_account}__{safe_task}.json"
         return self.run_history_dir / f"{self._safe_history_key(task_name)}.json"
 
-    def _known_account_names(self) -> List[str]:
+    def _known_account_names(self) -> list[str]:
         names = set()
         try:
             names.update(name for name in list_account_names() if name)
@@ -217,7 +217,7 @@ class SignTaskService:
         return sorted(names)
 
     def _infer_account_name(
-        self, config: Dict[str, Any], task_dir: Optional[Path] = None
+        self, config: dict[str, Any], task_dir: Path | None = None
     ) -> str:
         account_name = config.get("account_name")
         if isinstance(account_name, str) and account_name.strip():
@@ -234,8 +234,8 @@ class SignTaskService:
         return ""
 
     def _resolve_task_dir(
-        self, task_name: str, account_name: Optional[str] = None
-    ) -> Optional[Path]:
+        self, task_name: str, account_name: str | None = None
+    ) -> Path | None:
         if account_name:
             account_task_dir = self.signs_dir / account_name / task_name
             if (account_task_dir / "config.json").exists():
@@ -306,13 +306,13 @@ class SignTaskService:
         return text
 
     def _normalize_flow_logs(
-        self, flow_logs: Optional[List[str]]
-    ) -> tuple[List[str], bool, int]:
+        self, flow_logs: list[str] | None
+    ) -> tuple[list[str], bool, int]:
         if not isinstance(flow_logs, list):
             return [], False, 0
 
         total = len(flow_logs)
-        trimmed: List[str] = []
+        trimmed: list[str] = []
         for line in flow_logs:
             text = self._repair_mojibake(str(line)).replace("\r", "").rstrip("\n")
             trimmed.append(text)
@@ -320,14 +320,12 @@ class SignTaskService:
 
     def _load_history_entries(
         self, task_name: str, account_name: str = ""
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         history_file = self._history_file_path(task_name, account_name)
         legacy_file = self.run_history_dir / f"{self._safe_history_key(task_name)}.json"
 
         if not history_file.exists():
-            if account_name and legacy_file.exists():
-                history_file = legacy_file
-            elif not account_name and legacy_file.exists():
+            if account_name and legacy_file.exists() or not account_name and legacy_file.exists():
                 history_file = legacy_file
             else:
                 return []
@@ -345,7 +343,7 @@ class SignTaskService:
         else:
             return []
 
-        entries: List[Dict[str, Any]] = []
+        entries: list[dict[str, Any]] = []
         for item in data_list:
             if not isinstance(item, dict):
                 continue
@@ -360,14 +358,12 @@ class SignTaskService:
 
     def get_task_history_logs(
         self, task_name: str, account_name: str, limit: int = 20
-    ) -> List[Dict[str, Any]]:
-        if limit < 1:
-            limit = 1
-        if limit > 200:
-            limit = 200
+    ) -> list[dict[str, Any]]:
+        limit = max(limit, 1)
+        limit = min(limit, 200)
 
         history = self._load_history_entries(task_name, account_name=account_name)
-        result: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
         try:
             from backend.services.keyword_monitor import get_keyword_monitor_service
 
@@ -396,7 +392,7 @@ class SignTaskService:
             )
         return result
 
-    def get_account_history_logs(self, account_name: str) -> List[Dict[str, Any]]:
+    def get_account_history_logs(self, account_name: str) -> list[dict[str, Any]]:
         """获取某账号下所有任务的最近历史日志"""
         all_history = []
         if not self.run_history_dir.exists():
@@ -444,7 +440,7 @@ class SignTaskService:
         all_history.sort(key=lambda x: x.get("time", ""), reverse=True)
         return all_history
 
-    def clear_account_history_logs(self, account_name: str) -> Dict[str, int]:
+    def clear_account_history_logs(self, account_name: str) -> dict[str, int]:
         """娓呯悊鏌愯处鍙风殑鍘嗗彶鏃ュ織锛屼笉褰卞搷鍏朵粬璐﹀彿"""
         removed_files = 0
         removed_entries = 0
@@ -540,7 +536,7 @@ class SignTaskService:
                     pass
                 continue
 
-            kept: List[Dict[str, Any]] = []
+            kept: list[dict[str, Any]] = []
             for item in data_list:
                 if not isinstance(item, dict):
                     continue
@@ -566,7 +562,7 @@ class SignTaskService:
 
     def _get_last_run_info(
         self, task_dir: Path, account_name: str = ""
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         获取任务的最后执行信息
         """
@@ -596,7 +592,7 @@ class SignTaskService:
         success: bool,
         message: str = "",
         account_name: str = "",
-        flow_logs: Optional[List[str]] = None,
+        flow_logs: list[str] | None = None,
     ):
         """保存任务执行历史 (保留列表)"""
         from datetime import datetime
@@ -682,7 +678,7 @@ class SignTaskService:
                 'Failed to write scheduler log %s: %s', filename, e
             )
 
-    def _get_effective_proxy(self, account_name: str) -> Optional[str]:
+    def _get_effective_proxy(self, account_name: str) -> str | None:
         proxy_value = get_account_proxy(account_name)
         if proxy_value:
             return proxy_value
@@ -701,7 +697,7 @@ class SignTaskService:
         account_name: str,
         task_name: str,
         message: str,
-        flow_logs: Optional[List[str]] = None,
+        flow_logs: list[str] | None = None,
     ) -> None:
         try:
             from backend.services.config import get_config_service
@@ -750,7 +746,7 @@ class SignTaskService:
         account_name: str,
         task_name: str,
         message: str,
-        flow_logs: Optional[List[str]] = None,
+        flow_logs: list[str] | None = None,
     ) -> None:
         try:
             from backend.services.config import get_config_service
@@ -872,7 +868,7 @@ class SignTaskService:
         account_name: str,
         task_name: str,
         no_updates: bool,
-    ) -> Optional[str]:
+    ) -> str | None:
         stored_status = get_account_status(account_name)
         if (
             stored_status.get("status") == "invalid"
@@ -923,8 +919,8 @@ class SignTaskService:
         return None
 
     def list_tasks(
-        self, account_name: Optional[str] = None, force_refresh: bool = False
-    ) -> List[Dict[str, Any]]:
+        self, account_name: str | None = None, force_refresh: bool = False
+    ) -> list[dict[str, Any]]:
         """
         获取所有签到任务列表 (支持内存缓存)
         """
@@ -975,11 +971,11 @@ class SignTaskService:
                 ]
             return self._tasks_cache
 
-        except Exception as e:
-            logger.error("扫描任务目录出错: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("扫描任务目录出错")
             return []
 
-    def _load_task_config(self, task_dir: Path) -> Optional[Dict[str, Any]]:
+    def _load_task_config(self, task_dir: Path) -> dict[str, Any] | None:
         """加载单个任务配置，优先使用 config.json 中的 last_run"""
         config_file = task_dir / "config.json"
         if not config_file.exists():
@@ -1015,8 +1011,8 @@ class SignTaskService:
             return None
 
     def get_task(
-        self, task_name: str, account_name: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+        self, task_name: str, account_name: str | None = None
+    ) -> dict[str, Any] | None:
         """
         获取单个任务的详细信息
         """
@@ -1055,14 +1051,14 @@ class SignTaskService:
         self,
         task_name: str,
         sign_at: str,
-        chats: List[Dict[str, Any]],
+        chats: list[dict[str, Any]],
         random_seconds: int = 0,
-        sign_interval: Optional[int] = None,
+        sign_interval: int | None = None,
         account_name: str = "",
         execution_mode: str = "fixed",
         range_start: str = "",
         range_end: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         创建新的签到任务
         """
@@ -1114,7 +1110,10 @@ class SignTaskService:
         self._tasks_cache = None
 
         try:
-            from backend.scheduler import add_or_update_sign_task_job, schedule_range_catchup
+            from backend.scheduler import (
+                add_or_update_sign_task_job,
+                schedule_range_catchup,
+            )
 
             add_or_update_sign_task_job(
                 account_name,
@@ -1144,15 +1143,15 @@ class SignTaskService:
     def update_task(
         self,
         task_name: str,
-        sign_at: Optional[str] = None,
-        chats: Optional[List[Dict[str, Any]]] = None,
-        random_seconds: Optional[int] = None,
-        sign_interval: Optional[int] = None,
-        account_name: Optional[str] = None,
-        execution_mode: Optional[str] = None,
-        range_start: Optional[str] = None,
-        range_end: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        sign_at: str | None = None,
+        chats: list[dict[str, Any]] | None = None,
+        random_seconds: int | None = None,
+        sign_interval: int | None = None,
+        account_name: str | None = None,
+        execution_mode: str | None = None,
+        range_start: str | None = None,
+        range_end: str | None = None,
+    ) -> dict[str, Any]:
         """
         更新签到任务
         """
@@ -1207,7 +1206,10 @@ class SignTaskService:
         self._tasks_cache = None
 
         try:
-            from backend.scheduler import add_or_update_sign_task_job, schedule_range_catchup
+            from backend.scheduler import (
+                add_or_update_sign_task_job,
+                schedule_range_catchup,
+            )
 
             add_or_update_sign_task_job(
                 config["account_name"],
@@ -1245,8 +1247,8 @@ class SignTaskService:
         }
 
     def set_task_enabled(
-        self, task_name: str, account_name: Optional[str], enabled: bool
-    ) -> Dict[str, Any]:
+        self, task_name: str, account_name: str | None, enabled: bool
+    ) -> dict[str, Any]:
         """启用 / 停用一个签到任务（仅切换调度状态，不修改其它配置）"""
         existing = self.get_task(task_name, account_name)
         if not existing:
@@ -1271,7 +1273,10 @@ class SignTaskService:
         self._tasks_cache = None
 
         try:
-            from backend.scheduler import add_or_update_sign_task_job, schedule_range_catchup
+            from backend.scheduler import (
+                add_or_update_sign_task_job,
+                schedule_range_catchup,
+            )
 
             cron_expr = (
                 config.get("range_start")
@@ -1290,7 +1295,7 @@ class SignTaskService:
         existing["enabled"] = bool(enabled)
         return existing
 
-    def delete_task(self, task_name: str, account_name: Optional[str] = None) -> bool:
+    def delete_task(self, task_name: str, account_name: str | None = None) -> bool:
         """
         删除签到任务
         """
@@ -1334,7 +1339,7 @@ class SignTaskService:
 
     async def get_account_chats(
         self, account_name: str, force_refresh: bool = False
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         获取账号的 Chat 列表 (带缓存)
         """
@@ -1357,18 +1362,15 @@ class SignTaskService:
         *,
         limit: int = 50,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         通过缓存搜索账号的 Chat 列表（不触发全量 get_dialogs）
         """
         cache_file = self.signs_dir / account_name / "chats_cache.json"
 
-        if limit < 1:
-            limit = 1
-        if limit > 200:
-            limit = 200
-        if offset < 0:
-            offset = 0
+        limit = max(limit, 1)
+        limit = min(limit, 200)
+        offset = max(offset, 0)
 
         if not cache_file.exists():
             return {"items": [], "total": 0, "limit": limit, "offset": offset}
@@ -1394,7 +1396,7 @@ class SignTaskService:
 
         is_numeric = q.lstrip("-").isdigit()
         if is_numeric or q.startswith("-100"):
-            def match(chat: Dict[str, Any]) -> bool:
+            def match(chat: dict[str, Any]) -> bool:
                 chat_id = chat.get("id")
                 if chat_id is None:
                     return False
@@ -1402,7 +1404,7 @@ class SignTaskService:
         else:
             q_lower = q.lower()
 
-            def match(chat: Dict[str, Any]) -> bool:
+            def match(chat: dict[str, Any]) -> bool:
                 title = (chat.get("title") or "").lower()
                 username = (chat.get("username") or "").lower()
                 return q_lower in title or q_lower in username
@@ -1446,7 +1448,7 @@ class SignTaskService:
         except Exception:
             pass
 
-    async def refresh_account_chats(self, account_name: str) -> List[Dict[str, Any]]:
+    async def refresh_account_chats(self, account_name: str) -> list[dict[str, Any]]:
         """
         连接 Telegram 并刷新 Chat 列表
         """
@@ -1516,7 +1518,7 @@ class SignTaskService:
         }
         client = get_client(**client_kwargs)
 
-        chats: List[Dict[str, Any]] = []
+        chats: list[dict[str, Any]] = []
         logger = logging.getLogger("backend")
         try:
             # 初始化账号锁（跨服务共享）
@@ -1525,12 +1527,10 @@ class SignTaskService:
 
             account_lock = self._account_locks[account_name]
 
-            async def _fetch_chats(active_client) -> List[Dict[str, Any]]:
-                local_chats: List[Dict[str, Any]] = []
+            async def _fetch_chats(active_client) -> list[dict[str, Any]]:
+                local_chats: list[dict[str, Any]] = []
                 # 使用上下文管理器处理生命周期和锁
-                async with account_lock:
-                    async with get_global_semaphore():
-                        async with active_client:
+                async with account_lock, get_global_semaphore(), active_client:
                             # 尝试获取用户信息，如果失败说明 session 无效
                             await active_client.get_me()
 
@@ -1624,11 +1624,11 @@ class SignTaskService:
 
             return chats
 
-        except Exception as e:
+        except Exception:  # noqa: TRY203
             # client 上下文管理器会自动处理 disconnect/stop，这里只需要处理业务异常
-            raise e
+            raise
 
-    async def run_task(self, account_name: str, task_name: str) -> Dict[str, Any]:
+    async def run_task(self, account_name: str, task_name: str) -> dict[str, Any]:
         """
         运行签到任务 (兼容接口，内部调用 run_task_with_logs)
         """
@@ -1637,14 +1637,14 @@ class SignTaskService:
     def _task_key(self, account_name: str, task_name: str) -> tuple[str, str]:
         return account_name, task_name
 
-    def _find_task_keys(self, task_name: str) -> List[tuple[str, str]]:
-        return [key for key in self._active_logs.keys() if key[1] == task_name]
+    def _find_task_keys(self, task_name: str) -> list[tuple[str, str]]:
+        return [key for key in self._active_logs if key[1] == task_name]
 
     def get_active_logs(
-        self, task_name: str, account_name: Optional[str] = None
-    ) -> List[str]:
+        self, task_name: str, account_name: str | None = None
+    ) -> list[str]:
         """获取正在运行任务的日志"""
-        monitor_logs: List[str] = []
+        monitor_logs: list[str] = []
         try:
             from backend.services.keyword_monitor import get_keyword_monitor_service
 
@@ -1672,7 +1672,7 @@ class SignTaskService:
             return logs
         return monitor_logs
 
-    def is_task_running(self, task_name: str, account_name: Optional[str] = None) -> bool:
+    def is_task_running(self, task_name: str, account_name: str | None = None) -> bool:
         """检查任务是否正在运行"""
         if account_name:
             return self._active_tasks.get(self._task_key(account_name, task_name), False)
@@ -1680,7 +1680,7 @@ class SignTaskService:
 
     async def run_task_with_logs(
         self, account_name: str, task_name: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """运行任务并实时捕获日志 (In-Process)"""
 
         if self.is_task_running(task_name, account_name):
@@ -1712,6 +1712,7 @@ class SignTaskService:
         error_msg = ""
         output_str = ""
         account_invalid_detected = False
+        has_keyword_monitor = False
 
         try:
             task_cfg = self.get_task(task_name, account_name=account_name)
@@ -1837,14 +1838,13 @@ class SignTaskService:
                                 await signer.run_once(num_of_dialogs=20)
                                 break
                             except Exception as e:
-                                if "database is locked" in str(e).lower():
-                                    if attempt < max_retries - 1:
-                                        delay = (attempt + 1) * 3
-                                        self._active_logs[task_key].append(
-                                            f"Session 被锁定，{delay} 秒后重试..."
-                                        )
-                                        await asyncio.sleep(delay)
-                                        continue
+                                if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                                    delay = (attempt + 1) * 3
+                                    self._active_logs[task_key].append(
+                                        f"Session 被锁定，{delay} 秒后重试..."
+                                    )
+                                    await asyncio.sleep(delay)
+                                    continue
                                 raise
 
                     success = True
@@ -1862,7 +1862,7 @@ class SignTaskService:
                     task_name,
                     invalid_message,
                 )
-            error_msg = f"任务执行出错: {str(e)}"
+            error_msg = f"任务执行出错: {e!s}"
             self._active_logs[task_key].append(error_msg)
             # 打印堆栈以便调试
             traceback.print_exc()
@@ -1963,6 +1963,16 @@ class SignTaskService:
 
             self._cleanup_tasks[task_key] = asyncio.create_task(cleanup())
 
+            # 签到任务结束后，关键词监控可能因 client 被替换而断线，触发重启
+            if has_keyword_monitor:
+                try:
+                    from backend.services.keyword_monitor import (
+                        get_keyword_monitor_service,
+                    )
+                    asyncio.create_task(get_keyword_monitor_service().restart_from_tasks())
+                except Exception:
+                    pass
+
         return {
             "success": success,
             "output": output_str,
@@ -1972,7 +1982,7 @@ class SignTaskService:
 
 
 # 创建全局实例
-_sign_task_service: Optional[SignTaskService] = None
+_sign_task_service: SignTaskService | None = None
 
 
 def get_sign_task_service() -> SignTaskService:

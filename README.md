@@ -161,6 +161,14 @@ frontend/     Next.js 管理面板
 
 ## 更新日志
 
+### 2026-09-14
+
+- **修复任务长期运行后无法执行**：消息处理器在异常退出时未从共享 Client 移除，导致每次失败都累积处理器；改用 `try/finally` 保证始终清理。
+- **修复 session 失效误判**：`check_account_status` 中的宽泛字符串匹配 (`"SESSION" and "INVALID"`) 会将 Pyrogram 内部异常误判为 session 失效，导致账号被永久写入 `needs_relogin=True`；改为精确匹配 Telegram API 错误码。
+- **修复检查后遗留连接**：`check_account_status` 调用 `client.connect()` 后不断开，导致 client 长期处于半连接状态；现在检查完毕后在 `finally` 中释放连接。
+- **修复匿名消息 AttributeError**：`on_message` / `on_edited_message` 中 `from_user` 为 None（频道或匿名消息）时访问 `.username` 崩溃，已改为安全访问。
+- **代码质量**：修复全部 ruff lint 错误（BLE001、SIM117、TRY401 等约 990 处），31 个测试全部通过。
+
 ### 2026-05-21
 
 - **任务失败自动重试**：签到任务因网络超时或其他错误失败时，10 分钟后自动重试一次；账号 session 失效时不重试（避免无效请求）；重试任务本身失败后不再产生二次重试。

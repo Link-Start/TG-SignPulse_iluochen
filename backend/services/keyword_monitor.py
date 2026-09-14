@@ -8,7 +8,7 @@ import time
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from pyrogram import errors, filters
 from pyrogram.handlers import MessageHandler
@@ -43,11 +43,11 @@ class KeywordMonitorRule:
     task_name: str
     chat_id: int
     chat_name: str
-    message_thread_id: Optional[int]
-    action: Dict[str, Any]
+    message_thread_id: int | None
+    action: dict[str, Any]
 
 
-def _parse_keywords(value: Any, *, split_commas: bool = True) -> List[str]:
+def _parse_keywords(value: Any, *, split_commas: bool = True) -> list[str]:
     if isinstance(value, list):
         raw_items = value
     elif split_commas:
@@ -57,7 +57,7 @@ def _parse_keywords(value: Any, *, split_commas: bool = True) -> List[str]:
     return [str(item).strip() for item in raw_items if str(item).strip()]
 
 
-def _keyword_split_commas(action: Dict[str, Any]) -> bool:
+def _keyword_split_commas(action: dict[str, Any]) -> bool:
     return (action.get("match_mode") or "contains").strip() != "regex"
 
 
@@ -70,7 +70,7 @@ def _regex_keyword_value(match: re.Match[str]) -> str:
     return match.group(0).strip()
 
 
-def _is_immediate_continue_action(action: Optional[Dict[str, Any]]) -> bool:
+def _is_immediate_continue_action(action: dict[str, Any] | None) -> bool:
     if not action:
         return False
     try:
@@ -100,7 +100,7 @@ def _message_url(message: Message) -> str:
     return ""
 
 
-def _as_int_or_none(value: Any) -> Optional[int]:
+def _as_int_or_none(value: Any) -> int | None:
     try:
         if value is None or str(value).strip() == "":
             return None
@@ -109,7 +109,7 @@ def _as_int_or_none(value: Any) -> Optional[int]:
         return None
 
 
-def _parse_forward_chat_id(value: Any) -> Optional[Union[int, str]]:
+def _parse_forward_chat_id(value: Any) -> int | str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -146,7 +146,7 @@ def _read_positive_float_env(name: str, default: float, minimum: float = 0.0) ->
         return default
 
 
-def _render_template(value: Any, variables: Dict[str, str]) -> Any:
+def _render_template(value: Any, variables: dict[str, str]) -> Any:
     if not isinstance(value, str):
         return value
 
@@ -156,8 +156,8 @@ def _render_template(value: Any, variables: Dict[str, str]) -> Any:
     return _TEMPLATE_PATTERN.sub(replace, value)
 
 
-def _render_action_templates(action: Dict[str, Any], variables: Dict[str, str]) -> Dict[str, Any]:
-    rendered: Dict[str, Any] = {}
+def _render_action_templates(action: dict[str, Any], variables: dict[str, str]) -> dict[str, Any]:
+    rendered: dict[str, Any] = {}
     for key, value in action.items():
         if isinstance(value, str):
             rendered[key] = _render_template(value, variables)
@@ -190,7 +190,7 @@ def _button_text_matches(target_text: str, button_text: str) -> bool:
     return len(button_text) >= 2 and button_text in target_text
 
 
-def _message_matches_thread(message: Message, message_thread_id: Optional[int]) -> bool:
+def _message_matches_thread(message: Message, message_thread_id: int | None) -> bool:
     if message_thread_id is None:
         return True
     msg_thread_id = _as_int_or_none(
@@ -264,7 +264,7 @@ def _message_has_button_text(message: Message, text: str) -> bool:
     return False
 
 
-def _message_supports_continue_action(message: Message, action: Dict[str, Any]) -> bool:
+def _message_supports_continue_action(message: Message, action: dict[str, Any]) -> bool:
     try:
         action_id = int(action.get("action"))
     except (TypeError, ValueError):
@@ -329,6 +329,7 @@ class KeywordMonitorService:
         self._lock = asyncio.Lock()
         self._task_logs: dict[tuple[str, str], list[str]] = {}
         self._task_status: dict[tuple[str, str], dict[str, Any]] = {}
+        self._watchdog_task: asyncio.Task | None = None
 
     def _task_key(self, account_name: str, task_name: str) -> tuple[str, str]:
         return account_name, task_name
@@ -339,7 +340,7 @@ class KeywordMonitorService:
         task_name: str,
         line: str,
         *,
-        active: Optional[bool] = None,
+        active: bool | None = None,
     ) -> None:
         key = self._task_key(account_name, task_name)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -359,7 +360,7 @@ class KeywordMonitorService:
         rule: KeywordMonitorRule,
         line: str,
         *,
-        active: Optional[bool] = None,
+        active: bool | None = None,
     ) -> None:
         self._append_task_log(
             rule.account_name,
@@ -368,7 +369,7 @@ class KeywordMonitorService:
             active=active,
         )
 
-    def get_task_logs(self, task_name: str, account_name: Optional[str] = None) -> list[str]:
+    def get_task_logs(self, task_name: str, account_name: str | None = None) -> list[str]:
         if account_name:
             return list(self._task_logs.get(self._task_key(account_name, task_name), []))
 
@@ -381,7 +382,7 @@ class KeywordMonitorService:
         self,
         task_name: str,
         account_name: str,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         key = self._task_key(account_name, task_name)
         logs = self._task_logs.get(key) or []
         status = self._task_status.get(key)
@@ -420,7 +421,7 @@ class KeywordMonitorService:
             parts.append(f"后续动作={len(continue_actions)} 步")
         return "，".join(parts)
 
-    def _describe_continue_action(self, action: Dict[str, Any]) -> str:
+    def _describe_continue_action(self, action: dict[str, Any]) -> str:
         try:
             action_id = int(action.get("action"))
         except (TypeError, ValueError):
@@ -509,7 +510,7 @@ class KeywordMonitorService:
                     )
         return rules
 
-    def _match_keyword(self, action: Dict[str, Any], text: str) -> Optional[str]:
+    def _match_keyword(self, action: dict[str, Any], text: str) -> str | None:
         keywords = _parse_keywords(
             action.get("keywords"),
             split_commas=_keyword_split_commas(action),
@@ -538,7 +539,7 @@ class KeywordMonitorService:
                 return keyword
         return None
 
-    def _message_thread_id(self, message: Message) -> Optional[int]:
+    def _message_thread_id(self, message: Message) -> int | None:
         return _as_int_or_none(
             getattr(message, "message_thread_id", None)
             or getattr(message, "reply_to_top_message_id", None)
@@ -555,7 +556,7 @@ class KeywordMonitorService:
         chat_title: str,
         sender: str,
         url: str,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         return {
             "keyword": matched,
             "message": text,
@@ -569,13 +570,13 @@ class KeywordMonitorService:
             "account_name": account_name,
         }
 
-    def _continue_actions(self, action: Dict[str, Any]) -> list[Dict[str, Any]]:
+    def _continue_actions(self, action: dict[str, Any]) -> list[dict[str, Any]]:
         actions = action.get("continue_actions")
         if not isinstance(actions, list):
             return []
 
         supported = {1, 2, 3, 4, 5, 6, 7}
-        result: list[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
         for item in actions:
             if not isinstance(item, dict):
                 continue
@@ -588,8 +589,8 @@ class KeywordMonitorService:
         return result
 
     def _continue_target(
-        self, action: Dict[str, Any], source_message: Message
-    ) -> tuple[Union[int, str], Optional[int]]:
+        self, action: dict[str, Any], source_message: Message
+    ) -> tuple[int | str, int | None]:
         target_chat_id = _parse_forward_chat_id(action.get("continue_chat_id"))
         if target_chat_id is None:
             target_chat_id = source_message.chat.id
@@ -602,7 +603,7 @@ class KeywordMonitorService:
             return target_chat_id, self._message_thread_id(source_message)
         return target_chat_id, None
 
-    def _continue_interval(self, action: Dict[str, Any]) -> float:
+    def _continue_interval(self, action: dict[str, Any]) -> float:
         try:
             return max(float(action.get("continue_action_interval", 1)), 0.0)
         except (TypeError, ValueError):
@@ -617,7 +618,7 @@ class KeywordMonitorService:
                 return AITools(cfg)
         raise RuntimeError("OpenAI config is required for keyword monitor AI actions")
 
-    async def _warm_chat(self, client: Any, chat_id: Union[int, str]) -> None:
+    async def _warm_chat(self, client: Any, chat_id: int | str) -> None:
         try:
             await client.get_chat(chat_id)
         except Exception as exc:
@@ -626,9 +627,9 @@ class KeywordMonitorService:
     async def _request_callback_answer(
         self,
         client: Any,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         message_id: int,
-        callback_data: Union[str, bytes],
+        callback_data: str | bytes,
     ) -> bool:
         max_retries = 3
         for attempt in range(1, max_retries + 1):
@@ -663,11 +664,10 @@ class KeywordMonitorService:
 
     async def _click_inline_button(self, client: Any, message: Message, button: Any) -> bool:
         callback_data = getattr(button, "callback_data", None)
-        if callback_data is not None:
-            if await self._request_callback_answer(
-                client, message.chat.id, message.id, callback_data
-            ):
-                return True
+        if callback_data is not None and await self._request_callback_answer(
+            client, message.chat.id, message.id, callback_data
+        ):
+            return True
 
         click = getattr(message, "click", None)
         if callable(click):
@@ -696,9 +696,9 @@ class KeywordMonitorService:
     async def _click_keyboard_by_text_result(
         self,
         client: Any,
-        target_chat_id: Union[int, str],
-        target_thread_id: Optional[int],
-        action: Dict[str, Any],
+        target_chat_id: int | str,
+        target_thread_id: int | None,
+        action: dict[str, Any],
         message: Message,
     ) -> tuple[bool, bool]:
         target_text = _clean_text_for_match(str(action.get("text") or ""))
@@ -725,7 +725,7 @@ class KeywordMonitorService:
                     if not button_text:
                         continue
                     if _button_text_matches(target_text, _clean_text_for_match(button_text)):
-                        kwargs: Dict[str, Any] = {}
+                        kwargs: dict[str, Any] = {}
                         if target_thread_id is not None:
                             kwargs["message_thread_id"] = target_thread_id
                         await client.send_message(target_chat_id, button_text, **kwargs)
@@ -735,9 +735,9 @@ class KeywordMonitorService:
     async def _click_keyboard_by_text(
         self,
         client: Any,
-        target_chat_id: Union[int, str],
-        target_thread_id: Optional[int],
-        action: Dict[str, Any],
+        target_chat_id: int | str,
+        target_thread_id: int | None,
+        action: dict[str, Any],
         message: Message,
     ) -> bool:
         clicked, _matched = await self._click_keyboard_by_text_result(
@@ -752,8 +752,8 @@ class KeywordMonitorService:
     async def _recent_messages(
         self,
         client: Any,
-        chat_id: Union[int, str],
-        thread_id: Optional[int],
+        chat_id: int | str,
+        thread_id: int | None,
         limit: int,
     ) -> list[Message]:
         messages: list[Message] = []
@@ -779,10 +779,10 @@ class KeywordMonitorService:
     async def _find_recent_message(
         self,
         client: Any,
-        chat_id: Union[int, str],
-        thread_id: Optional[int],
+        chat_id: int | str,
+        thread_id: int | None,
         action_id: int,
-    ) -> Optional[Message]:
+    ) -> Message | None:
         limit = _read_positive_int_env(
             "KEYWORD_MONITOR_CONTINUE_HISTORY_LIMIT", DEFAULT_HISTORY_LIMIT, 1
         )
@@ -795,8 +795,8 @@ class KeywordMonitorService:
     async def _wait_for_chat_advance(
         self,
         client: Any,
-        chat_id: Union[int, str],
-        thread_id: Optional[int],
+        chat_id: int | str,
+        thread_id: int | None,
         before_state: dict[int, tuple[Any, ...]],
         *,
         limit: int,
@@ -815,9 +815,9 @@ class KeywordMonitorService:
     async def _wait_for_continue_action_candidate(
         self,
         client: Any,
-        chat_id: Union[int, str],
-        thread_id: Optional[int],
-        action: Dict[str, Any],
+        chat_id: int | str,
+        thread_id: int | None,
+        action: dict[str, Any],
         before_state: dict[int, tuple[Any, ...]],
         *,
         limit: int,
@@ -844,8 +844,8 @@ class KeywordMonitorService:
     async def _wait_for_terminal_success(
         self,
         client: Any,
-        chat_id: Union[int, str],
-        thread_id: Optional[int],
+        chat_id: int | str,
+        thread_id: int | None,
         before_state: dict[int, tuple[Any, ...]],
         *,
         limit: int,
@@ -876,14 +876,14 @@ class KeywordMonitorService:
     async def _execute_ai_action(
         self,
         client: Any,
-        target_chat_id: Union[int, str],
-        target_thread_id: Optional[int],
-        action: Dict[str, Any],
+        target_chat_id: int | str,
+        target_thread_id: int | None,
+        action: dict[str, Any],
         message: Message,
     ) -> bool:
         action_id = int(action.get("action"))
         ai_tools = self._get_ai_tools()
-        kwargs: Dict[str, Any] = {}
+        kwargs: dict[str, Any] = {}
         if target_thread_id is not None:
             kwargs["message_thread_id"] = target_thread_id
 
@@ -949,14 +949,14 @@ class KeywordMonitorService:
     async def _execute_continue_action(
         self,
         client: Any,
-        target_chat_id: Union[int, str],
-        target_thread_id: Optional[int],
-        action: Dict[str, Any],
-        timeout: Optional[float] = None,
-        next_action: Optional[Dict[str, Any]] = None,
+        target_chat_id: int | str,
+        target_thread_id: int | None,
+        action: dict[str, Any],
+        timeout: float | None = None,
+        next_action: dict[str, Any] | None = None,
     ) -> bool:
         action_id = int(action.get("action"))
-        kwargs: Dict[str, Any] = {}
+        kwargs: dict[str, Any] = {}
         if target_thread_id is not None:
             kwargs["message_thread_id"] = target_thread_id
 
@@ -1091,7 +1091,7 @@ class KeywordMonitorService:
         client: Any,
         rule: KeywordMonitorRule,
         message: Message,
-        variables: Dict[str, str],
+        variables: dict[str, str],
     ) -> None:
         continue_actions = self._continue_actions(rule.action)
         if not continue_actions:
@@ -1487,8 +1487,34 @@ class KeywordMonitorService:
                         )
 
             self._active_key = key if started_accounts == set(accounts) else ""
+            if started_accounts:
+                self._start_watchdog()
+
+    def _start_watchdog(self) -> None:
+        if self._watchdog_task is None or self._watchdog_task.done():
+            self._watchdog_task = asyncio.create_task(self._watchdog())
+
+    async def _watchdog(self) -> None:
+        """每 30s 检查一次 Pyrogram 客户端连接状态，断线则自动重启。"""
+        while True:
+            await asyncio.sleep(30)
+            if not self._handler_refs:
+                continue
+            dead = any(
+                not getattr(client, "is_connected", True)
+                for _, client, _ in self._handler_refs
+            )
+            if dead:
+                logger.warning("关键词监控检测到 Telegram 连接断开，正在自动重启...")
+                try:
+                    await self.restart_from_tasks()
+                except Exception as exc:
+                    logger.error("关键词监控 watchdog 重启失败: %s", exc)
 
     async def stop(self) -> None:
+        if self._watchdog_task and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
         for rule in self._rules:
             self._append_rule_log(
                 rule,
@@ -1511,7 +1537,7 @@ class KeywordMonitorService:
         self._active_key = ""
 
 
-_keyword_monitor_service: Optional[KeywordMonitorService] = None
+_keyword_monitor_service: KeywordMonitorService | None = None
 
 
 def get_keyword_monitor_service() -> KeywordMonitorService:

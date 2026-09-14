@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -28,7 +27,7 @@ def is_task_running(task_id: int) -> bool:
     return _active_tasks.get(task_id, False)
 
 
-def list_tasks(db: Session) -> List[Task]:
+def list_tasks(db: Session) -> list[Task]:
     return db.query(Task).order_by(Task.id.desc()).all()
 
 
@@ -58,7 +57,7 @@ def cleanup_old_logs(db: Session, days: int = 3) -> int:
     return count
 
 
-def get_task(db: Session, task_id: int) -> Optional[Task]:
+def get_task(db: Session, task_id: int) -> Task | None:
     return db.query(Task).filter(Task.id == task_id).first()
 
 
@@ -80,10 +79,10 @@ def update_task(
     db: Session,
     task: Task,
     *,
-    name: Optional[str] = None,
-    cron: Optional[str] = None,
-    enabled: Optional[bool] = None,
-    account_id: Optional[int] = None,
+    name: str | None = None,
+    cron: str | None = None,
+    enabled: bool | None = None,
+    account_id: int | None = None,
 ) -> Task:
     if name is not None:
         task.name = name
@@ -191,7 +190,7 @@ async def run_task_once(db: Session, task: Task) -> TaskLog:
     return task_log
 
 
-def list_task_logs(db: Session, task_id: int, limit: int = 50) -> List[TaskLog]:
+def list_task_logs(db: Session, task_id: int, limit: int = 50) -> list[TaskLog]:
     return (
         db.query(TaskLog)
         .filter(TaskLog.task_id == task_id)

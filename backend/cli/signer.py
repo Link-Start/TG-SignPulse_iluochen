@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-from typing import Optional
 
 from backend.core.config import get_settings
 
@@ -20,8 +19,8 @@ def _base_args() -> list[str]:
 
 def login_account(
     account_name: str,
-    code: Optional[str] = None,
-    password: Optional[str] = None,
+    code: str | None = None,
+    password: str | None = None,
 ) -> subprocess.CompletedProcess:
     """
     Trigger tg-signer login flow.
@@ -39,4 +38,5 @@ def login_account(
         input=input_data.encode() if input_data else None,
         capture_output=True,
         text=True,
+        check=False,
     )

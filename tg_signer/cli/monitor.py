@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from typing import Optional
 
 import click
 from click import Group
@@ -11,7 +10,7 @@ from .signer import tg_signer
 
 
 def get_monitor(
-    task_name, ctx_obj: dict, loop: Optional[asyncio.AbstractEventLoop] = None
+    task_name, ctx_obj: dict, loop: asyncio.AbstractEventLoop | None = None
 ):
     monitor = UserMonitor(
         task_name=task_name,
@@ -35,8 +34,7 @@ def tg_monitor(ctx: click.Context):
     ]:
         if proxy := ctx.obj.get("proxy"):
             logger.info(
-                "Using proxy: %s"
-                % f"{proxy['scheme']}://{proxy['hostname']}:{proxy['port']}"
+                "Using proxy: {}".format(f"{proxy['scheme']}://{proxy['hostname']}:{proxy['port']}")
             )
         logger.info(f"Using account: {ctx.obj['account']}")
 
@@ -82,7 +80,7 @@ def reconfig(obj, task_name):
     "--file", "-O", "file", type=click.Path(), default=None, help="导出至该文件"
 )
 @click.pass_obj
-def export(obj, task_name: str, file: str = None):
+def export(obj, task_name: str, file: str | None = None):
     monitor = get_monitor(task_name, obj)
     data = monitor.export()
     if not file:
@@ -101,7 +99,7 @@ def export(obj, task_name: str, file: str = None):
     "--file", "-I", "file", type=click.Path(), default=None, help="导入该文件"
 )
 @click.pass_obj
-def import_(obj, task_name: str, file: str = None):
+def import_(obj, task_name: str, file: str | None = None):
     monitor = get_monitor(task_name, obj)
     if not file:
         stdin_text = click.get_text_stream("stdin")

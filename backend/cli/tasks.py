@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from backend.core.config import get_settings
 
@@ -25,7 +25,7 @@ async def async_run_task_cli(
     account_name: str,
     task_name: str,
     num_of_dialogs: int = 50,
-    callback: Optional[Callable[[str], None]] = None,
+    callback: Callable[[str], None] | None = None,
 ) -> tuple[int, str, str]:
     """
     Asynchronously run a tg-signer sign task using CLI.

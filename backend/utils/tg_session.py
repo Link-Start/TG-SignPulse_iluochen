@@ -5,7 +5,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from backend.core.config import get_settings
 
@@ -13,7 +13,7 @@ _SESSION_MODE_ENV = "TG_SESSION_MODE"
 _SESSION_MODE_FILE = "file"
 _SESSION_MODE_STRING = "string"
 
-_GLOBAL_SEMAPHORE: Optional[asyncio.Semaphore] = None
+_GLOBAL_SEMAPHORE: asyncio.Semaphore | None = None
 
 
 def get_session_mode() -> str:
@@ -39,8 +39,7 @@ def get_global_semaphore() -> asyncio.Semaphore:
             limit = int(raw)
         except ValueError:
             limit = 1
-        if limit < 1:
-            limit = 1
+        limit = max(limit, 1)
         _GLOBAL_SEMAPHORE = asyncio.Semaphore(limit)
     return _GLOBAL_SEMAPHORE
 
@@ -85,7 +84,7 @@ def list_account_names() -> list[str]:
     return sorted(accounts.keys())
 
 
-def get_account_session_string(account_name: str) -> Optional[str]:
+def get_account_session_string(account_name: str) -> str | None:
     data = _load_account_store()
     entry = data.get("accounts", {}).get(account_name)
     if not isinstance(entry, dict):
@@ -136,7 +135,7 @@ def get_account_profile(account_name: str) -> dict[str, Any]:
     }
 
 
-def get_account_proxy(account_name: str) -> Optional[str]:
+def get_account_proxy(account_name: str) -> str | None:
     profile = get_account_profile(account_name)
     proxy = profile.get("proxy")
     if isinstance(proxy, str) and proxy.strip():
@@ -145,7 +144,7 @@ def get_account_proxy(account_name: str) -> Optional[str]:
 
 
 
-def get_account_remark(account_name: str) -> Optional[str]:
+def get_account_remark(account_name: str) -> str | None:
     profile = get_account_profile(account_name)
     remark = profile.get("remark")
     if isinstance(remark, str) and remark.strip():
@@ -154,7 +153,7 @@ def get_account_remark(account_name: str) -> Optional[str]:
 
 
 def set_account_profile(
-    account_name: str, *, remark: Optional[str] = None, proxy: Optional[str] = None
+    account_name: str, *, remark: str | None = None, proxy: str | None = None
 ) -> None:
     data = _load_account_store()
     accounts = data.get("accounts")
@@ -191,9 +190,9 @@ def set_account_status(
     *,
     status: str,
     message: str = "",
-    code: Optional[str] = None,
+    code: str | None = None,
     needs_relogin: bool = False,
-    invalid_notified_at: Optional[str] = None,
+    invalid_notified_at: str | None = None,
 ) -> None:
     data = _load_account_store()
     accounts = data.get("accounts")
@@ -221,7 +220,7 @@ def session_string_file_path(session_dir: Path, account_name: str) -> Path:
     return session_dir / f"{account_name}.session_string"
 
 
-def load_session_string_file(session_dir: Path, account_name: str) -> Optional[str]:
+def load_session_string_file(session_dir: Path, account_name: str) -> str | None:
     path = session_string_file_path(session_dir, account_name)
     if not path.exists():
         return None

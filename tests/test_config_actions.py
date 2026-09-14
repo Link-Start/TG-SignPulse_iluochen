@@ -3,20 +3,15 @@
 无需 Telegram 连接，纯单元测试。
 """
 
-import pytest
 from tg_signer.config import (
-    SignChatV3,
-    SendTextAction,
-    SendDiceAction,
-    ClickKeyboardByTextAction,
     ChooseOptionByImageAction,
-    ReplyByCalculationProblemAction,
-    ReplyByImageRecognitionAction,
-    ClickButtonByCalculationProblemAction,
+    ClickKeyboardByTextAction,
     KeywordNotifyAction,
+    SendDiceAction,
+    SendTextAction,
+    SignChatV3,
     SupportAction,
 )
-
 
 # ── SignChatV3 解析 ──────────────────────────────────────────────────────────
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel
 
@@ -17,16 +16,16 @@ class TaskCreate(TaskBase):
 
 
 class TaskUpdate(BaseModel):
-    name: Optional[str] = None
-    cron: Optional[str] = None
-    enabled: Optional[bool] = None
-    account_id: Optional[int] = None
+    name: str | None = None
+    cron: str | None = None
+    enabled: bool | None = None
+    account_id: int | None = None
 
 
 class TaskOut(TaskBase):
     id: int
     enabled: bool
-    last_run_at: Optional[datetime] = None
+    last_run_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

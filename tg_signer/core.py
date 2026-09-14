@@ -13,11 +13,7 @@ from datetime import time as dt_time
 from typing import (
     BinaryIO,
     Generic,
-    List,
-    Optional,
-    Type,
     TypeVar,
-    Union,
 )
 from urllib import parse
 
@@ -71,8 +67,7 @@ _original_sqlite3_connect = sqlite3.connect
 def _patched_sqlite3_connect(*args, **kwargs):
     # Force timeout to be at least 10 seconds, even if Pyrogram sets it to 1
     if "timeout" in kwargs:
-        if kwargs["timeout"] < 30:
-            kwargs["timeout"] = 30
+        kwargs["timeout"] = max(kwargs["timeout"], 30)
     else:
         kwargs["timeout"] = 30
     return _original_sqlite3_connect(*args, **kwargs)
@@ -190,7 +185,7 @@ def readable_chat(chat: Chat):
     else:
         type_ = "个人"
 
-    none_or_dash = lambda x: x or "-"  # noqa: E731
+    none_or_dash = lambda x: x or "-"
 
     return f"id: {chat.id}, username: {none_or_dash(chat.username)}, title: {none_or_dash(chat.title)}, type: {type_}, name: {none_or_dash(chat.first_name)}"
 
@@ -239,7 +234,7 @@ class Client(BaseClient):
                             await self.start()
                         except ConnectionError as e:
                             if "already connected" not in str(e).lower():
-                                raise e
+                                raise
 
                         # Enable WAL mode after start
                         if hasattr(self, "storage") and hasattr(self.storage, "conn"):
@@ -278,7 +273,7 @@ class Client(BaseClient):
                                 await self.stop()
                             except Exception:
                                 pass
-                        raise e
+                        raise
             return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -338,7 +333,7 @@ def get_api_config():
     return api_id, api_hash
 
 
-def get_proxy(proxy: str = None):
+def get_proxy(proxy: str | None = None):
     proxy = proxy or os.environ.get("TG_PROXY")
     if proxy:
         r = parse.urlparse(proxy)
@@ -354,12 +349,12 @@ def get_proxy(proxy: str = None):
 
 def get_client(
     name: str = "my_account",
-    proxy: dict = None,
-    workdir: Union[str, pathlib.Path] = ".",
-    session_string: str = None,
+    proxy: dict | None = None,
+    workdir: str | pathlib.Path = ".",
+    session_string: str | None = None,
     in_memory: bool = False,
-    api_id: int = None,
-    api_hash: str = None,
+    api_id: int | None = None,
+    api_hash: str | None = None,
     **kwargs,
 ) -> Client:
     proxy = proxy or get_proxy()
@@ -399,7 +394,7 @@ def get_client(
     return client
 
 
-async def close_client_by_name(name: str, workdir: Union[str, pathlib.Path] = "."):
+async def close_client_by_name(name: str, workdir: str | pathlib.Path = "."):
     """
     Forcefully close a client instance by its name and release resources.
     """
@@ -461,22 +456,22 @@ ConfigT = TypeVar("ConfigT", bound=BaseJSONConfig)
 class BaseUserWorker(Generic[ConfigT]):
     _workdir = "."
     _tasks_dir = "tasks"
-    cfg_cls: Type["ConfigT"] = BaseJSONConfig
+    cfg_cls: type["ConfigT"] = BaseJSONConfig
 
     def __init__(
         self,
-        task_name: str = None,
+        task_name: str | None = None,
         session_dir: str = ".",
         account: str = "my_account",
         proxy=None,
         workdir=None,
-        session_string: str = None,
+        session_string: str | None = None,
         in_memory: bool = False,
-        api_id: int = None,
-        api_hash: str = None,
-        no_updates: Optional[bool] = None,
+        api_id: int | None = None,
+        api_hash: str | None = None,
+        no_updates: bool | None = None,
         *,
-        loop: Optional[asyncio.AbstractEventLoop] = None,
+        loop: asyncio.AbstractEventLoop | None = None,
     ):
         self.task_name = task_name or "my_task"
         self._session_dir = pathlib.Path(session_dir)
@@ -501,7 +496,7 @@ class BaseUserWorker(Generic[ConfigT]):
             **client_kwargs,
         )
         self.loop = self.app.loop
-        self.user: Optional[User] = None
+        self.user: User | None = None
         self._config = None
         self.context = self.ensure_ctx()
 
@@ -575,7 +570,7 @@ class BaseUserWorker(Generic[ConfigT]):
         self.write_config(config)
         return config
 
-    def load_config(self, cfg_cls: Type[ConfigT] = None) -> ConfigT:
+    def load_config(self, cfg_cls: type[ConfigT] | None = None) -> ConfigT:
         cfg_cls = cfg_cls or self.cfg_cls
         if not self.config_file.exists():
             config = self.reconfig()
@@ -671,7 +666,7 @@ class BaseUserWorker(Generic[ConfigT]):
         return await self.app.log_out()
 
     async def send_message(
-        self, chat_id: Union[int, str], text: str, delete_after: int = None, **kwargs
+        self, chat_id: int | str, text: str, delete_after: int | None = None, **kwargs
     ):
         """
         发送文本消息
@@ -702,9 +697,9 @@ class BaseUserWorker(Generic[ConfigT]):
 
     async def send_dice(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         emoji: str = "🎲",
-        delete_after: int = None,
+        delete_after: int | None = None,
         **kwargs,
     ):
         """
@@ -744,7 +739,7 @@ class BaseUserWorker(Generic[ConfigT]):
         return message
 
     async def search_members(
-        self, chat_id: Union[int, str], query: str, admin=False, limit=10
+        self, chat_id: int | str, query: str, admin=False, limit=10
     ):
         filter_ = ChatMembersFilter.SEARCH
         if admin:
@@ -756,7 +751,7 @@ class BaseUserWorker(Generic[ConfigT]):
             yield member
 
     async def list_members(
-        self, chat_id: Union[int, str], query: str = "", admin=False, limit=10
+        self, chat_id: int | str, query: str = "", admin=False, limit=10
     ):
         async with self.app:
             async for member in self.search_members(chat_id, query, admin, limit):
@@ -831,7 +826,7 @@ class UserSignerWorkerContext(BaseModel):
     waiter: Waiter
     sign_chats: dict  # 签到配置列表, int -> list[SignChatV3]
     chat_messages: dict  # 收到的消息, int -> dict[int, Optional[Message]]
-    waiting_message: Optional[Message] = None  # 正在处理的消息
+    waiting_message: Message | None = None  # 正在处理的消息
 
 
 class UserSigner(BaseUserWorker[SignConfigV3]):
@@ -848,7 +843,7 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
             waiting_message=None,
         )
 
-    def _load_chat_cache(self) -> List[dict]:
+    def _load_chat_cache(self) -> list[dict]:
         try:
             cache_file = self.tasks_dir / self._account / "chats_cache.json"
             if not cache_file.exists():
@@ -859,7 +854,7 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         except Exception:
             return []
 
-    def _find_cached_chat(self, chat_id: int, name: Optional[str]) -> Optional[dict]:
+    def _find_cached_chat(self, chat_id: int, name: str | None) -> dict | None:
         entries = self._load_chat_cache()
 
         candidate_ids = {chat_id}
@@ -870,7 +865,7 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
             except Exception:
                 pass
 
-        def _search_entries(cache_entries: List[dict]) -> Optional[dict]:
+        def _search_entries(cache_entries: list[dict]) -> dict | None:
             for entry in cache_entries:
                 try:
                     if entry.get("id") in candidate_ids:
@@ -921,8 +916,8 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         return sign_record_dir / "sign_record.json"
 
     def _ask_actions(
-        self, input_: UserInput, available_actions: List[SupportAction] = None
-    ) -> List[ActionT]:
+        self, input_: UserInput, available_actions: list[SupportAction] | None = None
+    ) -> list[ActionT]:
         print_to_user(f"{input_.index_str}开始配置<动作>，请按照实际签到顺序配置。")
         available_actions = available_actions or list(SupportAction)
         actions = []
@@ -1037,7 +1032,7 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         return config
 
     @classmethod
-    def _validate_sign_at(cls, sign_at_str: str) -> Optional[str]:
+    def _validate_sign_at(cls, sign_at_str: str) -> str | None:
         sign_at_str = sign_at_str.replace("：", ":").strip()
 
         try:
@@ -1178,7 +1173,7 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         if total_actions == 0:
             raise RuntimeError("任务没有配置任何执行动作")
         max_flow_attempts = _read_positive_int_env("SIGN_TASK_FLOW_RETRY_ATTEMPTS", 3, 1)
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         for flow_attempt in range(1, max_flow_attempts + 1):
             if max_flow_attempts > 1:
@@ -1299,67 +1294,69 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
                 return False
             return True
 
-        while True:
-            if need_update_handlers and message_handler_ref is None:
-                self.log(f"adding message handlers for chats: {chat_ids}")
-                message_handler_ref = self.app.add_handler(
-                    MessageHandler(self.on_message, filters.chat(chat_ids))
-                )
-                edited_handler_ref = self.app.add_handler(
-                    EditedMessageHandler(self.on_edited_message, filters.chat(chat_ids))
-                )
-            try:
-                started_here = False
-                if not getattr(self.app, "is_connected", False):
-                    await self.app.start()
-                    started_here = True
+        try:
+            while True:
+                if need_update_handlers and message_handler_ref is None:
+                    self.log(f"adding message handlers for chats: {chat_ids}")
+                    message_handler_ref = self.app.add_handler(
+                        MessageHandler(self.on_message, filters.chat(chat_ids))
+                    )
+                    edited_handler_ref = self.app.add_handler(
+                        EditedMessageHandler(self.on_edited_message, filters.chat(chat_ids))
+                    )
                 try:
-                    now = get_now()
-                    self.log(f"当前时间: {now}")
-                    now_date_str = str(now.date())
-                    self.context = self.ensure_ctx()
-                    if need_sign(now_date_str):
-                        if only_once and config.random_seconds > 0:
-                            delay = random.randint(0, int(config.random_seconds))
-                            if delay > 0:
-                                self.log(f"单次执行随机延迟: {delay} 秒")
-                                await asyncio.sleep(delay)
-                        await sign_once()
-                finally:
-                    if started_here:
-                        await self.app.stop()
+                    started_here = False
+                    if not getattr(self.app, "is_connected", False):
+                        await self.app.start()
+                        started_here = True
+                    try:
+                        now = get_now()
+                        self.log(f"当前时间: {now}")
+                        now_date_str = str(now.date())
+                        self.context = self.ensure_ctx()
+                        if need_sign(now_date_str):
+                            if only_once and config.random_seconds > 0:
+                                delay = random.randint(0, int(config.random_seconds))
+                                if delay > 0:
+                                    self.log(f"单次执行随机延迟: {delay} 秒")
+                                    await asyncio.sleep(delay)
+                            await sign_once()
+                    finally:
+                        if started_here:
+                            await self.app.stop()
 
-            except (OSError, errors.Unauthorized) as e:
-                logger.exception(e)
-                await asyncio.sleep(30)
-                continue
+                except (OSError, errors.Unauthorized):
+                    logger.exception("运行异常")
+                    await asyncio.sleep(30)
+                    continue
 
-            if only_once:
-                break
-            cron_it = croniter(self._validate_sign_at(config.sign_at), now)
-            next_run: datetime = cron_it.next(datetime) + timedelta(
-                seconds=random.randint(0, int(config.random_seconds))
-            )
-            self.log(f"下次运行时间: {next_run}")
-            await asyncio.sleep((next_run - now).total_seconds())
+                if only_once:
+                    break
+                cron_it = croniter(self._validate_sign_at(config.sign_at), now)
+                next_run: datetime = cron_it.next(datetime) + timedelta(
+                    seconds=random.randint(0, int(config.random_seconds))
+                )
+                self.log(f"下次运行时间: {next_run}")
+                await asyncio.sleep((next_run - now).total_seconds())
 
-
-        if message_handler_ref:
-            try:
-                self.app.remove_handler(*message_handler_ref)
-            except Exception:
-                pass
-        if edited_handler_ref:
-            try:
-                self.app.remove_handler(*edited_handler_ref)
-            except Exception:
-                pass
+        finally:
+            # 无论正常结束还是异常退出，均移除消息处理器，防止在共享 client 上累积
+            if message_handler_ref:
+                try:
+                    self.app.remove_handler(*message_handler_ref)
+                except Exception:
+                    pass
+            if edited_handler_ref:
+                try:
+                    self.app.remove_handler(*edited_handler_ref)
+                except Exception:
+                    pass
 
     async def run_once(self, num_of_dialogs):
         return await self.run(num_of_dialogs, only_once=True, force_rerun=True)
 
     async def send_text(
-        self, chat_id: int, text: str, delete_after: int = None, **kwargs
+        self, chat_id: int, text: str, delete_after: int | None = None, **kwargs
     ):
         if self.user is None:
             await self.login(print_chat=False)
@@ -1368,9 +1365,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
 
     async def send_dice_cli(
         self,
-        chat_id: Union[str, int],
+        chat_id: str | int,
         emoji: str = "🎲",
-        delete_after: int = None,
+        delete_after: int | None = None,
         **kwargs,
     ):
         if self.user is None:
@@ -1400,14 +1397,18 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         self.context.chat_messages[message.chat.id][message.id] = message
 
     async def on_message(self, client: Client, message: Message):
+        sender = message.from_user
+        sender_name = (getattr(sender, "username", None) or getattr(sender, "id", None)) if sender else message.chat.id
         self.log(
-            f"收到来自「{message.from_user.username or message.from_user.id}」的消息: {readable_message(message)}"
+            f"收到来自「{sender_name}」的消息: {readable_message(message)}"
         )
         await self._on_message(client, message)
 
     async def on_edited_message(self, client, message: Message):
+        sender = message.from_user
+        sender_name = (getattr(sender, "username", None) or getattr(sender, "id", None)) if sender else message.chat.id
         self.log(
-            f"收到来自「{message.from_user.username or message.from_user.id}」对消息的更新，消息: {readable_message(message)}"
+            f"收到来自「{sender_name}」对消息的更新，消息: {readable_message(message)}"
         )
         await self._on_message(client, message)
 
@@ -1717,14 +1718,13 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
 
     async def _click_inline_button(self, message: Message, btn) -> bool:
         callback_data = getattr(btn, "callback_data", None)
-        if callback_data is not None:
-            if await self.request_callback_answer(
-                self.app,
-                message.chat.id,
-                message.id,
-                callback_data,
-            ):
-                return True
+        if callback_data is not None and await self.request_callback_answer(
+            self.app,
+            message.chat.id,
+            message.id,
+            callback_data,
+        ):
+            return True
 
         click = getattr(message, "click", None)
         if callable(click):
@@ -1765,7 +1765,7 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         action: ClickKeyboardByTextAction,
         message: Message,
         *,
-        message_thread_id: Optional[int] = None,
+        message_thread_id: int | None = None,
         before_click=None,
         log_not_found: bool = True,
     ) -> tuple[bool, bool]:
@@ -1819,7 +1819,7 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         action: ClickKeyboardByTextAction,
         message: Message,
         *,
-        message_thread_id: Optional[int] = None,
+        message_thread_id: int | None = None,
     ):
         clicked, _matched = await self._click_keyboard_by_text_result(
             action,
@@ -1908,8 +1908,7 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         return await self._click_keyboard_by_text(proxy_action, message)
 
     async def _choose_option_by_image(self, action: ChooseOptionByImageAction, message):
-        if reply_markup := message.reply_markup:
-            if isinstance(reply_markup, InlineKeyboardMarkup) and message.photo:
+        if (reply_markup := message.reply_markup) and isinstance(reply_markup, InlineKeyboardMarkup) and message.photo:
                 flat_buttons = [b for row in reply_markup.inline_keyboard for b in row]
                 clickable_buttons = [btn for btn in flat_buttons if btn.text]
                 self.log("检测到图片按钮验证，调用 AI 识别并按顺序点击选项")
@@ -1964,7 +1963,7 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         action: ActionT,
         timeout=None,
         *,
-        next_action: Optional[ActionT] = None,
+        next_action: ActionT | None = None,
     ):
         if timeout is None:
             timeout = _read_positive_float_env("SIGN_TASK_ACTION_TIMEOUT", 25.0, 5.0)
@@ -2207,9 +2206,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
     async def request_callback_answer(
         self,
         client: Client,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         message_id: int,
-        callback_data: Union[str, bytes],
+        callback_data: str | bytes,
         **kwargs,
     ) -> bool:
         max_retries = 5
@@ -2253,9 +2252,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
 
     async def schedule_messages(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         text: str,
-        crontab: str = None,
+        crontab: str | None = None,
         next_times: int = 1,
         random_seconds: int = 0,
     ):
@@ -2439,7 +2438,7 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
     async def udp_forward(cls, f: UDPForward, message: Message):
         data = str(message).encode("utf-8")
         loop = asyncio.get_running_loop()
-        transport, protocol = await loop.create_datagram_endpoint(
+        transport, _protocol = await loop.create_datagram_endpoint(
             lambda: _UDPProtocol(), remote_addr=(f.host, f.port)
         )
         try:
@@ -2512,8 +2511,8 @@ class UserMonitor(BaseUserWorker[MonitorConfig]):
                             f"匹配到监控项：{match_cfg.chat_id}",
                             f"消息内容为:\n\n{message.text}",
                         )
-            except IndexError as e:
-                logger.exception(e)
+            except IndexError:
+                logger.exception("处理消息时索引错误")
 
     async def get_send_text(self, match_cfg: MatchConfig, message: Message) -> str:
         send_text = match_cfg.get_send_text(message.text)

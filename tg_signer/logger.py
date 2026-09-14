@@ -32,7 +32,7 @@ def configure_logger(
     name: str = "tg-signer",
     log_level: str = "INFO",
     log_dir: str | pathlib.Path = "logs",
-    log_file: str | pathlib.Path = None,
+    log_file: str | pathlib.Path | None = None,
     max_bytes: int = 1024 * 1024 * 3,
 ):
     level = log_level.strip().upper()

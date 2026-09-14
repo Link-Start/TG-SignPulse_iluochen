@@ -4,9 +4,8 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional
 
-_BASE_DIR: Optional[Path] = None
+_BASE_DIR: Path | None = None
 _DATA_DIR_OVERRIDE_FILE_ENV = "APP_DATA_DIR_OVERRIDE_FILE"
 _DEFAULT_DATA_DIR_OVERRIDE_FILE = Path.cwd() / ".tg_signpulse_data_dir"
 
@@ -44,7 +43,7 @@ def get_data_dir_override_file() -> Path:
     return _DEFAULT_DATA_DIR_OVERRIDE_FILE
 
 
-def load_data_dir_override() -> Optional[Path]:
+def load_data_dir_override() -> Path | None:
     override_file = get_data_dir_override_file()
     if not override_file.exists():
         return None

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import io
-from typing import Optional
 
 import pyotp
 import qrcode
@@ -52,7 +51,7 @@ class ChangeUsernameResponse(BaseModel):
 
     success: bool
     message: str
-    access_token: Optional[str] = None
+    access_token: str | None = None
 
 
 class EnableTOTPRequest(BaseModel):
@@ -85,7 +84,7 @@ class TOTPStatusResponse(BaseModel):
     """2FA状态响应"""
 
     enabled: bool
-    secret: Optional[str] = None  # 只在首次设置时返回
+    secret: str | None = None  # 只在首次设置时返回
 
 
 # ============ API Routes ============
@@ -212,8 +211,8 @@ def setup_totp(
 
 @router.get("/totp/qrcode")
 def get_totp_qrcode(
-    token: Optional[str] = None,
-    current_user: Optional[User] = Depends(get_current_user_optional),
+    token: str | None = None,
+    current_user: User | None = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
     """

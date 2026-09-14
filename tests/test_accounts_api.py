@@ -3,10 +3,7 @@
 使用 FastAPI TestClient + 依赖注入覆盖，不需要真实 Telegram 连接。
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi.testclient import TestClient
-
+from unittest.mock import patch
 
 # ── TestChatRequest / TestChatResponse Schema ────────────────────────────────
 

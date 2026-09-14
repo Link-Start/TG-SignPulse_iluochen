@@ -59,10 +59,10 @@ TASK_RETRY_DELAY_SECONDS = 600  # 失败后 10 分钟重试一次
 
 def _schedule_task_retry(account_name: str, task_name: str) -> None:
     """失败后注册一次性重试 job，10 分钟后执行，不再产生新重试。"""
-    global scheduler
     if not scheduler:
         return
     from datetime import datetime, timedelta
+
     from apscheduler.triggers.date import DateTrigger
 
     retry_id = f"sign-{account_name}-{task_name}-retry"
@@ -103,8 +103,8 @@ async def _job_run_sign_task(
             # 账号失效不重试；已经是重试则不再重试
             if not is_retry and not result.get("account_invalid"):
                 _schedule_task_retry(account_name, task_name)
-    except Exception as e:
-        logger.error("%s运行签到任务 %s 异常: %s", prefix, task_name, e, exc_info=True)
+    except Exception:
+        logger.exception("%s运行签到任务 %s 异常", prefix, task_name)
         if not is_retry:
             _schedule_task_retry(account_name, task_name)
 
@@ -115,7 +115,6 @@ def _schedule_range_random_run(account_name: str, task_name: str, st: dict) -> N
     相比 asyncio.sleep，DateTrigger 注册到 APScheduler 后进程重启仍可通过
     sync_jobs / schedule_range_catchup 补回，不会因重启丢失当天执行。
     """
-    global scheduler
     if not scheduler:
         return
 
@@ -184,7 +183,6 @@ def schedule_range_catchup(account_name: str, task_name: str, st: dict) -> None:
     如果当前时刻处于 range 窗口内且今日尚未执行，添加一次性立即任务。
     用于解决"窗口已开始后才创建/启动任务，当天不执行"的问题。
     """
-    global scheduler
     if not scheduler:
         return
 
@@ -389,7 +387,6 @@ def add_or_update_sign_task_job(
     task_config: dict | None = None,
 ) -> None:
     """动态添加或更新签到任务 Job"""
-    global scheduler
     if not scheduler:
         return
 
@@ -425,7 +422,6 @@ def add_or_update_sign_task_job(
 
 def remove_sign_task_job(account_name: str, task_name: str) -> None:
     """动态移除签到任务 Job"""
-    global scheduler
     if not scheduler:
         return
 

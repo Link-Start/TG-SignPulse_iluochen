@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
-from typing import Optional
 
 import pyotp
 from fastapi import Depends, HTTPException, status
@@ -20,7 +19,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 settings = get_settings()
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + (
         expires_delta or timedelta(hours=settings.access_token_expire_hours)
@@ -43,14 +42,13 @@ def verify_totp(secret: str, code: str) -> bool:
             valid_window = int(raw_window) if raw_window else 1
         except ValueError:
             valid_window = 1
-        if valid_window < 0:
-            valid_window = 0
+        valid_window = max(valid_window, 0)
         return totp.verify(code, valid_window=valid_window)
     except Exception:
         return False
 
 
-def authenticate_user(db: Session, username: str, password: str) -> Optional[User]:
+def authenticate_user(db: Session, username: str, password: str) -> User | None:
     user = db.query(User).filter(User.username == username).first()
     if not user:
         return None
@@ -87,16 +85,16 @@ oauth2_scheme_optional = OAuth2PasswordBearer(
 
 
 def get_current_user_optional(
-    token: Optional[str] = Depends(oauth2_scheme_optional),
+    token: str | None = Depends(oauth2_scheme_optional),
     db: Session = Depends(get_db),
-) -> Optional[User]:
+) -> User | None:
     """获取当前用户，如果无法认证则返回 None（不抛出异常）"""
     if not token:
         return None
     return verify_token(token, db)
 
 
-def verify_token(token: str, db: Session) -> Optional[User]:
+def verify_token(token: str, db: Session) -> User | None:
     """验证 Token 并返回用户对象"""
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])

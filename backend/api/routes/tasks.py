@@ -153,6 +153,7 @@ async def task_logs_ws(
     await websocket.accept()
 
     last_idx = 0
+    ping_ticks = 0
     try:
         while True:
             # 获取当前所有日志
@@ -169,6 +170,7 @@ async def task_logs_ws(
                     }
                 )
                 last_idx = len(active_logs)
+                ping_ticks = 0
 
             # 如果任务已结束且日志已推完
             if not task_service.is_task_running(task_id) and last_idx >= len(
@@ -176,6 +178,12 @@ async def task_logs_ws(
             ):
                 await websocket.send_json({"type": "done", "is_running": False})
                 break
+
+            # 每 10s 发送 ping，防止反向代理空闲超时断开
+            ping_ticks += 1
+            if ping_ticks >= 20:
+                ping_ticks = 0
+                await websocket.send_json({"type": "ping"})
 
             await asyncio.sleep(0.5)
     except WebSocketDisconnect:
@@ -209,5 +217,5 @@ def get_log_output(
         return {"output": content}
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to read log file: {str(e)}"
+            status_code=500, detail=f"Failed to read log file: {e!s}"
         )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
 from urllib.parse import urlparse
 
 
@@ -22,7 +21,7 @@ def normalize_proxy_url(raw: str) -> str:
     return f"socks5://{value}"
 
 
-def build_proxy_dict(raw: str) -> Optional[dict]:
+def build_proxy_dict(raw: str) -> dict | None:
     value = normalize_proxy_url(raw)
     if not value:
         return None

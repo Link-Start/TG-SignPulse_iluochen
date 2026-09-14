@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -29,7 +28,7 @@ class LoginStartRequest(BaseModel):
 
     account_name: str
     phone_number: str
-    proxy: Optional[str] = None
+    proxy: str | None = None
 
 
 class LoginStartResponse(BaseModel):
@@ -48,17 +47,17 @@ class LoginVerifyRequest(BaseModel):
     phone_number: str
     phone_code: str
     phone_code_hash: str
-    password: Optional[str] = None  # 2FA 密码
-    proxy: Optional[str] = None
+    password: str | None = None  # 2FA 密码
+    proxy: str | None = None
 
 
 class LoginVerifyResponse(BaseModel):
     """验证登录响应"""
 
     success: bool
-    user_id: Optional[int] = None
-    first_name: Optional[str] = None
-    username: Optional[str] = None
+    user_id: int | None = None
+    first_name: str | None = None
+    username: str | None = None
     message: str
 
 
@@ -66,7 +65,7 @@ class QrLoginStartRequest(BaseModel):
     """扫码登录请求"""
 
     account_name: str
-    proxy: Optional[str] = None
+    proxy: str | None = None
 
 
 class QrLoginStartResponse(BaseModel):
@@ -74,7 +73,7 @@ class QrLoginStartResponse(BaseModel):
 
     login_id: str
     qr_uri: str
-    qr_image: Optional[str] = None
+    qr_image: str | None = None
     expires_at: str
 
 
@@ -85,12 +84,12 @@ class AccountInfo(BaseModel):
     session_file: str
     exists: bool
     size: int
-    remark: Optional[str] = None
-    proxy: Optional[str] = None
+    remark: str | None = None
+    proxy: str | None = None
     status: str = "connected"
-    status_message: Optional[str] = None
-    status_code: Optional[str] = None
-    status_checked_at: Optional[str] = None
+    status_message: str | None = None
+    status_code: str | None = None
+    status_checked_at: str | None = None
     needs_relogin: bool = False
 
 
@@ -98,12 +97,12 @@ class QrLoginStatusResponse(BaseModel):
     """扫码登录状态响应"""
 
     status: str
-    expires_at: Optional[str] = None
-    message: Optional[str] = None
-    account: Optional[AccountInfo] = None
-    user_id: Optional[int] = None
-    first_name: Optional[str] = None
-    username: Optional[str] = None
+    expires_at: str | None = None
+    message: str | None = None
+    account: AccountInfo | None = None
+    user_id: int | None = None
+    first_name: str | None = None
+    username: str | None = None
 
 
 class QrLoginCancelRequest(BaseModel):
@@ -131,10 +130,10 @@ class QrLoginPasswordResponse(BaseModel):
 
     success: bool
     message: str
-    account: Optional[AccountInfo] = None
-    user_id: Optional[int] = None
-    first_name: Optional[str] = None
-    username: Optional[str] = None
+    account: AccountInfo | None = None
+    user_id: int | None = None
+    first_name: str | None = None
+    username: str | None = None
 
 
 class AccountListResponse(BaseModel):
@@ -154,8 +153,8 @@ class DeleteAccountResponse(BaseModel):
 class AccountUpdateRequest(BaseModel):
     """更新账号备注/代理"""
 
-    remark: Optional[str] = None
-    proxy: Optional[str] = None
+    remark: str | None = None
+    proxy: str | None = None
 
 
 class AccountUpdateResponse(BaseModel):
@@ -163,13 +162,13 @@ class AccountUpdateResponse(BaseModel):
 
     success: bool
     message: str
-    account: Optional[AccountInfo] = None
+    account: AccountInfo | None = None
 
 
 class AccountStatusCheckRequest(BaseModel):
     """批量账号状态检测请求"""
 
-    account_names: Optional[list[str]] = None
+    account_names: list[str] | None = None
     timeout_seconds: float = 6.0
 
 
@@ -180,10 +179,10 @@ class AccountStatusItem(BaseModel):
     ok: bool
     status: str
     message: str = ""
-    code: Optional[str] = None
-    checked_at: Optional[str] = None
+    code: str | None = None
+    checked_at: str | None = None
     needs_relogin: bool = False
-    user_id: Optional[int] = None
+    user_id: int | None = None
 
 
 class AccountStatusCheckResponse(BaseModel):
@@ -220,7 +219,7 @@ async def start_account_login(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"发送验证码失败: {str(e)}",
+            detail=f"发送验证码失败: {e!s}",
         )
 
 
@@ -258,7 +257,7 @@ async def verify_account_login(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"登录验证失败: {str(e)}",
+            detail=f"登录验证失败: {e!s}",
         )
 
 
@@ -302,7 +301,7 @@ async def start_qr_login(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"开始扫码登录失败: {str(e)}",
+            detail=f"开始扫码登录失败: {e!s}",
         )
 
 
@@ -328,7 +327,7 @@ async def get_qr_login_status(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取扫码状态失败: {str(e)}",
+            detail=f"获取扫码状态失败: {e!s}",
         )
 
 
@@ -358,7 +357,7 @@ async def submit_qr_login_password(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"提交 2FA 密码失败: {str(e)}",
+            detail=f"提交 2FA 密码失败: {e!s}",
         )
 
 
@@ -376,7 +375,7 @@ async def cancel_qr_login(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"取消扫码登录失败: {str(e)}",
+            detail=f"取消扫码登录失败: {e!s}",
         )
 
 
@@ -397,7 +396,7 @@ def list_accounts(current_user: User = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取账号列表失败: {str(e)}",
+            detail=f"获取账号列表失败: {e!s}",
         )
 
 
@@ -452,7 +451,7 @@ async def check_accounts_status(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"账号状态检测失败: {str(e)}",
+            detail=f"账号状态检测失败: {e!s}",
         )
 
 
@@ -483,7 +482,7 @@ async def delete_account(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"删除账号失败: {str(e)}",
+            detail=f"删除账号失败: {e!s}",
         )
 
 
@@ -499,7 +498,7 @@ def check_account_exists(
 class TestSendRequest(BaseModel):
     chat_id: int
     text: str
-    message_thread_id: Optional[int] = None
+    message_thread_id: int | None = None
 
 
 class TestSendResponse(BaseModel):
@@ -509,11 +508,11 @@ class TestSendResponse(BaseModel):
 
 class TestChatRequest(BaseModel):
     chat_id: int
-    name: Optional[str] = None
+    name: str | None = None
     actions: list
     action_interval: float = 1
-    message_thread_id: Optional[int] = None
-    delete_after: Optional[int] = None
+    message_thread_id: int | None = None
+    delete_after: int | None = None
 
 
 class TestChatResponse(BaseModel):
@@ -525,16 +524,17 @@ class TestChatResponse(BaseModel):
 def _get_account_client_params(account_name: str):
     """返回 (session_dir, session_string, use_in_memory, proxy_dict, api_id, api_hash)"""
     import os
+
     from backend.core.config import get_settings
+    from backend.services.config import get_config_service
     from backend.utils.account_locks import get_account_lock  # noqa: F401 (re-exported)
+    from backend.utils.proxy import build_proxy_dict
     from backend.utils.tg_session import (
         get_account_proxy,
         get_account_session_string,
         get_session_mode,
         load_session_string_file,
     )
-    from backend.utils.proxy import build_proxy_dict
-    from backend.services.config import get_config_service
 
     settings = get_settings()
     session_dir = settings.resolve_session_dir()
@@ -577,8 +577,8 @@ async def test_send_message(
     current_user: User = Depends(get_current_user),
 ):
     """向指定 Chat 发送一条测试消息"""
-    from tg_signer.core import get_client
     from backend.utils.account_locks import get_account_lock
+    from tg_signer.core import get_client
 
     service = get_telegram_service()
     if not service.account_exists(account_name):
@@ -629,12 +629,14 @@ async def test_run_chat(
 ):
     """执行目标聊天配置的实际动作序列（测试用）"""
     import logging
-    from tg_signer.config import SignChatV3
-    from backend.utils.account_locks import get_account_lock
-    from backend.utils.tg_session import get_global_semaphore
-    from backend.services.sign_tasks import BackendUserSigner, TaskLogHandler
+
     from pyrogram import filters as tg_filters
     from pyrogram.handlers import EditedMessageHandler, MessageHandler
+
+    from backend.services.sign_tasks import BackendUserSigner, TaskLogHandler
+    from backend.utils.account_locks import get_account_lock
+    from backend.utils.tg_session import get_global_semaphore
+    from tg_signer.config import SignChatV3
 
     service = get_telegram_service()
     if not service.account_exists(account_name):
@@ -787,7 +789,7 @@ def update_account(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"更新账号信息失败: {str(e)}",
+            detail=f"更新账号信息失败: {e!s}",
         )
 
 
@@ -798,8 +800,8 @@ class AccountLogItem(BaseModel):
     account_name: str
     task_name: str
     message: str
-    summary: Optional[str] = None
-    bot_message: Optional[str] = None
+    summary: str | None = None
+    bot_message: str | None = None
     success: bool
     created_at: str
 
@@ -850,7 +852,7 @@ class ClearAccountLogsResponse(BaseModel):
     success: bool
     cleared: int
     message: str
-    code: Optional[str] = None
+    code: str | None = None
 
 
 @router.get("/{account_name}/logs", response_model=list[AccountLogItem])

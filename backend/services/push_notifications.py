@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -10,7 +10,7 @@ import httpx
 logger = logging.getLogger("backend.push_notifications")
 
 
-def _as_int_or_none(value: Any) -> Optional[int]:
+def _as_int_or_none(value: Any) -> int | None:
     try:
         if value is None or str(value).strip() == "":
             return None
@@ -19,7 +19,7 @@ def _as_int_or_none(value: Any) -> Optional[int]:
         return None
 
 
-def _get_global_proxy() -> Optional[str]:
+def _get_global_proxy() -> str | None:
     """Read proxy from environment or global settings.
 
     Priority: TG_PROXY env → global_proxy in settings.
@@ -45,7 +45,7 @@ def _get_global_proxy() -> Optional[str]:
 def _build_httpx_client(timeout: int = 10) -> httpx.AsyncClient:
     """Build an httpx.AsyncClient with proxy support if configured."""
     proxy_url = _get_global_proxy()
-    kwargs: Dict[str, Any] = {"timeout": timeout}
+    kwargs: dict[str, Any] = {"timeout": timeout}
     if proxy_url:
         # httpx >= 0.28 uses ``proxy`` (single URL string).
         # Older versions used ``proxies`` (dict mapping). Try modern API first.
@@ -56,7 +56,7 @@ def _build_httpx_client(timeout: int = 10) -> httpx.AsyncClient:
     return httpx.AsyncClient(**kwargs)
 
 
-def _get_mtproto_proxy() -> Optional[Dict[str, Any]]:
+def _get_mtproto_proxy() -> dict[str, Any] | None:
     """Return proxy dict for Pyrogram, using the same lookup chain as sign tasks.
 
     Priority: TG_PROXY env → global_proxy in settings.
@@ -78,15 +78,16 @@ async def _send_via_mtproto(
     bot_token: str,
     chat_id: str,
     text: str,
-    message_thread_id: Optional[int] = None,
+    message_thread_id: int | None = None,
 ) -> None:
     """Send a bot message via MTProto (kurigram/Pyrogram bot client).
 
     Uses the same network path as sign tasks (direct DC connection, no HTTP DNS),
     so this works in environments where api.telegram.org is DNS-blocked.
     """
-    from tg_signer.core import get_api_config
     from pyrogram import Client
+
+    from tg_signer.core import get_api_config
 
     api_id, api_hash = get_api_config()
     proxy_dict = _get_mtproto_proxy()
@@ -97,7 +98,7 @@ async def _send_via_mtproto(
     except (ValueError, TypeError):
         peer = chat_id  # username or invite link
 
-    kwargs: Dict[str, Any] = {}
+    kwargs: dict[str, Any] = {}
     if message_thread_id is not None:
         kwargs["message_thread_id"] = message_thread_id
 
@@ -117,7 +118,7 @@ async def send_telegram_bot_message(
     bot_token: str,
     chat_id: str,
     text: str,
-    message_thread_id: Optional[int] = None,
+    message_thread_id: int | None = None,
 ) -> None:
     """Send a bot message, preferring MTProto and falling back to HTTP Bot API."""
     # MTProto first: avoids DNS dependency on api.telegram.org, uses same
@@ -134,7 +135,7 @@ async def send_telegram_bot_message(
         logger.warning("MTProto bot send failed (%s: %s), falling back to HTTP", type(e).__name__, e)
 
     # Fallback: HTTP Bot API
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": text[:3900],
         "disable_web_page_preview": False,
@@ -162,7 +163,7 @@ async def send_telegram_bot_message(
             response.raise_for_status()
 
 
-async def send_keyword_push(settings: Dict[str, Any], payload: Dict[str, Any]) -> None:
+async def send_keyword_push(settings: dict[str, Any], payload: dict[str, Any]) -> None:
     channel = (settings.get("keyword_monitor_push_channel") or "telegram").strip()
     title = str(payload.get("title") or "TG-SignPulse 关键词命中")
     body = str(payload.get("body") or "")
@@ -227,7 +228,7 @@ async def send_keyword_push(settings: Dict[str, Any], payload: Dict[str, Any]) -
 
 
 async def send_login_notification(
-    settings: Dict[str, Any],
+    settings: dict[str, Any],
     *,
     username: str,
     ip_address: str,

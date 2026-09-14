@@ -48,15 +48,14 @@ def login(
             detail="Invalid username or password",
         )
     logger.info("Authenticated: user=%s totp_enabled=%s", user.username, bool(user.totp_secret))
-    if user.totp_secret:
-        if not payload.totp_code or not verify_totp(
-            user.totp_secret, payload.totp_code
-        ):
-            logger.warning("TOTP verification failed: user=%s", user.username)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="TOTP_REQUIRED_OR_INVALID",
-            )
+    if user.totp_secret and (not payload.totp_code or not verify_totp(
+        user.totp_secret, payload.totp_code
+    )):
+        logger.warning("TOTP verification failed: user=%s", user.username)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="TOTP_REQUIRED_OR_INVALID",
+        )
     access_token = create_access_token(
         data={"sub": user.username},
         expires_delta=timedelta(hours=12),

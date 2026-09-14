@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -20,6 +20,7 @@ async def _logs_event_stream(
     current_user,
 ) -> AsyncGenerator[bytes, None]:
     last_id = 0
+    idle_ticks = 0
     while True:
         logs = (
             db.query(TaskLog)
@@ -28,17 +29,25 @@ async def _logs_event_stream(
             .limit(100)
             .all()
         )
-        for log in logs:
-            last_id = log.id
-            payload = {
-                "id": log.id,
-                "task_id": log.task_id,
-                "status": log.status,
-                "started_at": log.started_at.isoformat(),
-                "finished_at": log.finished_at.isoformat() if log.finished_at else None,
-            }
-            data = f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            yield data.encode("utf-8")
+        if logs:
+            idle_ticks = 0
+            for log in logs:
+                last_id = log.id
+                payload = {
+                    "id": log.id,
+                    "task_id": log.task_id,
+                    "status": log.status,
+                    "started_at": log.started_at.isoformat(),
+                    "finished_at": log.finished_at.isoformat() if log.finished_at else None,
+                }
+                data = f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                yield data.encode("utf-8")
+        else:
+            idle_ticks += 1
+            # 每 20s 发送 SSE 心跳注释，防止反向代理因空闲超时断开连接
+            if idle_ticks >= 20:
+                idle_ticks = 0
+                yield b": keep-alive\n\n"
         await asyncio.sleep(1)
 
 

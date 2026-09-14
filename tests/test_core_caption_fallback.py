@@ -3,10 +3,9 @@
 通过直接调用私有方法或使用 unittest.mock 构造伪 Message。
 """
 
-import asyncio
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from types import SimpleNamespace
 
 
 def make_message(text=None, caption=None, photo=None, reply_markup=None):
@@ -28,10 +27,9 @@ def make_message(text=None, caption=None, photo=None, reply_markup=None):
 async def test_reply_by_calculation_problem_uses_caption():
     """当 message.text 为 None 而 caption 有值时，应读取 caption"""
     from tg_signer.core import UserSigner
-    from tg_signer.config import ReplyByCalculationProblemAction, SupportAction
 
-    signer = MagicMock(spec=UserSigner)
-    action = MagicMock()
+    MagicMock(spec=UserSigner)
+    MagicMock()
 
     # 只有 caption 没有 text（图片消息）
     msg = make_message(text=None, caption="16 - 8 = ?")

@@ -1,7 +1,6 @@
 import asyncio
 import logging
-import os
-from typing import Optional
+from typing import ClassVar
 
 import click
 from click import Context, HelpFormatter
@@ -10,9 +9,9 @@ from tg_signer.core import UserSigner, get_proxy
 
 
 class AliasedGroup(click.Group):
-    _aliases = {"run_once": "run-once", "send_text": "send-text"}
+    _aliases: ClassVar[dict[str, str]] = {"run_once": "run-once", "send_text": "send-text"}
 
-    def __init__(self, name, aliases: dict[str, str] = None, *args, **kwargs):
+    def __init__(self, name, aliases: dict[str, str] | None = None, *args, **kwargs):
         self.aliases = self._aliases.copy()
         if aliases:
             self.aliases.update(aliases)
@@ -42,7 +41,7 @@ class AliasedGroup(click.Group):
 
 
 def get_signer(
-    task_name, ctx_obj: dict, loop: Optional[asyncio.AbstractEventLoop] = None
+    task_name, ctx_obj: dict, loop: asyncio.AbstractEventLoop | None = None
 ):
     signer = UserSigner(
         task_name=task_name,
@@ -163,8 +162,7 @@ def tg_signer(
     ]:
         if proxy:
             logger.info(
-                "Using proxy: %s"
-                % f"{proxy['scheme']}://{proxy['hostname']}:{proxy['port']}"
+                "Using proxy: {}".format(f"{proxy['scheme']}://{proxy['hostname']}:{proxy['port']}")
             )
         logger.info(f"Using account: {account}")
     ctx.obj["proxy"] = proxy
@@ -339,7 +337,7 @@ def list_members(obj, chat_id: str, query: str, admin, limit):
     "--file", "-O", "file", type=click.Path(), default=None, help="导出至该文件"
 )
 @click.pass_obj
-def export(obj, task_name: str, file: str = None):
+def export(obj, task_name: str, file: str | None = None):
     signer = get_signer(task_name, obj)
     data = signer.export()
     if not file:
@@ -358,7 +356,7 @@ def export(obj, task_name: str, file: str = None):
     "--file", "-I", "file", type=click.Path(), default=None, help="导入该文件"
 )
 @click.pass_obj
-def import_(obj, task_name: str, file: str = None):
+def import_(obj, task_name: str, file: str | None = None):
     signer = get_signer(task_name, obj)
     if not file:
         stdin_text = click.get_text_stream("stdin")

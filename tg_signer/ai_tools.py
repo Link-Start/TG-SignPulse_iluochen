@@ -3,10 +3,10 @@ import json
 import os
 import pathlib
 import re
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Optional
 
 import json_repair
-from typing_extensions import Optional, Required, TypedDict
+from typing_extensions import Required, TypedDict
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI  # 在性能弱的机器上导入openai包实在有些慢
@@ -22,12 +22,12 @@ def encode_image(image: bytes):
 
 class OpenAIConfig(TypedDict, total=False):
     api_key: Required[str]
-    base_url: Optional[str]
-    model: Optional[str]
+    base_url: str | None
+    model: str | None
 
 
 class OpenAIConfigManager:
-    def __init__(self, workdir: Union[str, pathlib.Path]):
+    def __init__(self, workdir: str | pathlib.Path):
         self.workdir = pathlib.Path(workdir)
 
     def get_config_file(self) -> pathlib.Path:
@@ -39,7 +39,7 @@ class OpenAIConfigManager:
     def has_config(self) -> bool:
         return self.has_env_config() and bool(self.load_file_config())
 
-    def load_file_config(self) -> Optional[dict]:
+    def load_file_config(self) -> dict | None:
         config_file = self.get_config_file()
         if config_file.exists():
             with open(config_file, "r", encoding="utf-8") as fp:
@@ -49,13 +49,13 @@ class OpenAIConfigManager:
                 return c
         return None
 
-    def save_config(self, api_key: str, base_url: str = None, model: str = None):
+    def save_config(self, api_key: str, base_url: str | None = None, model: str | None = None):
         config_file = self.get_config_file()
         config = OpenAIConfig(api_key=api_key, base_url=base_url, model=model)
         with open(config_file, "w", encoding="utf-8") as fp:
             json.dump(config, fp, ensure_ascii=False, indent=2)
 
-    def load_config(self) -> Optional[OpenAIConfig]:
+    def load_config(self) -> OpenAIConfig | None:
         # 环境变量优先
         if self.has_env_config():
             return OpenAIConfig(
@@ -91,8 +91,8 @@ class OpenAIConfigManager:
 
 
 def get_openai_client(
-    api_key: str = None,
-    base_url: str = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
     **kwargs,
 ) -> Optional["AsyncOpenAI"]:
     from openai import AsyncOpenAI, OpenAIError
@@ -116,7 +116,7 @@ class AITools:
         query: str,
         options: list[tuple[int, str]],
         client: "AsyncOpenAI" = None,
-        model: str = None,
+        model: str | None = None,
         temperature=0.1,
     ) -> int:
         sys_prompt = """你是一个**图片识别助手**，可以根据提供的图片和问题选择出**唯一正确**的选项，如果你觉得每个都不对，也要给出一个你认为最符合的答案，以如下JSON格式输出你的回复：
@@ -162,7 +162,7 @@ class AITools:
         query: str,
         options: list[tuple[int, str]],
         client: "AsyncOpenAI" = None,
-        model: str = None,
+        model: str | None = None,
         temperature=0.1,
     ) -> list[int]:
         sys_prompt = (
@@ -221,7 +221,7 @@ class AITools:
         image: bytes,
         query: str = "",
         client: "AsyncOpenAI" = None,
-        model: str = None,
+        model: str | None = None,
         temperature=0.1,
     ) -> str:
         sys_prompt = (
@@ -258,7 +258,7 @@ class AITools:
         self,
         query: str,
         client: "AsyncOpenAI" = None,
-        model: str = None,
+        model: str | None = None,
         temperature=0.1,
     ) -> str:
         sys_prompt = """你是一个**答题助手**，可以根据用户的问题给出正确的回答，只需要回复答案，不要解释，不要输出任何其他内容。"""
@@ -285,7 +285,7 @@ class AITools:
         prompt: str,
         query: str,
         client: "AsyncOpenAI" = None,
-        model: str = None,
+        model: str | None = None,
     ) -> str:
         model = model or self.default_model
         client = client or self.client

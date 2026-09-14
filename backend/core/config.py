@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 from backend.utils.storage import get_initial_data_dir, get_writable_base_dir
 
@@ -37,10 +36,10 @@ class Settings(BaseSettings):
 
     timezone: str = os.getenv("TZ", "Asia/Hong_Kong")
     data_dir: Path = get_initial_data_dir()
-    db_path: Optional[Path] = None
-    signer_workdir: Optional[Path] = None
-    session_dir: Optional[Path] = None
-    logs_dir: Optional[Path] = None
+    db_path: Path | None = None
+    signer_workdir: Path | None = None
+    session_dir: Path | None = None
+    logs_dir: Path | None = None
 
     class Config:
         env_file = ".env"
@@ -69,6 +68,6 @@ class Settings(BaseSettings):
         return get_writable_base_dir()
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     return Settings()

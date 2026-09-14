@@ -12,7 +12,7 @@ import os
 import secrets
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from backend.core.config import get_settings
 from backend.utils.account_locks import get_account_lock
@@ -47,10 +47,10 @@ class TelegramService:
     def __init__(self):
         self.session_dir = settings.resolve_session_dir()
         self.session_dir.mkdir(parents=True, exist_ok=True)
-        self._accounts_cache: Optional[List[Dict[str, Any]]] = None
+        self._accounts_cache: list[dict[str, Any]] | None = None
 
     @staticmethod
-    def _account_status_payload(account_name: str) -> Dict[str, Any]:
+    def _account_status_payload(account_name: str) -> dict[str, Any]:
         status = get_account_status(account_name)
         return {
             "status": status.get("status") or "connected",
@@ -60,7 +60,7 @@ class TelegramService:
             "needs_relogin": bool(status.get("needs_relogin", False)),
         }
 
-    def list_accounts(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+    def list_accounts(self, force_refresh: bool = False) -> list[dict[str, Any]]:
         """
         获取所有账号列表（基于 session 文件）
 
@@ -162,7 +162,7 @@ class TelegramService:
             return []
 
     @staticmethod
-    def _normalize_login_token_expires(expires: Optional[int]) -> int:
+    def _normalize_login_token_expires(expires: int | None) -> int:
         now = int(time.time())
         if not expires:
             return now + 300
@@ -190,14 +190,11 @@ class TelegramService:
             # 保险起见，如果没有找到，还是查一下文件，或者信任缓存？
             # 考虑到 start_login 会更新缓存，应该可以信任。
             # 但为了稳妥，如果缓存没命中，再查文件
-            pass
 
         if is_string_session_mode():
             if get_account_session_string(account_name):
                 return True
-            if load_session_string_file(self.session_dir, account_name):
-                return True
-            return False
+            return bool(load_session_string_file(self.session_dir, account_name))
 
         session_file = self.session_dir / f"{account_name}.session"
         return session_file.exists()
@@ -207,7 +204,7 @@ class TelegramService:
         account_name: str,
         timeout_seconds: float = 8.0,
         no_updates: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         检测账号 session 是否可用。
 
@@ -295,12 +292,21 @@ class TelegramService:
             }
 
         try:
-            # Reuse shared clients and avoid context-manager disconnect on each refresh.
             lock = get_account_lock(account_name)
             async with lock:
+                connected_here = False
                 if not getattr(client, "is_connected", False):
                     await client.connect()
-                me = await asyncio.wait_for(client.get_me(), timeout=timeout_seconds)
+                    connected_here = True
+                try:
+                    me = await asyncio.wait_for(client.get_me(), timeout=timeout_seconds)
+                finally:
+                    # 检查完毕后断开由本次检查建立的连接，避免 client 长期处于半连接状态
+                    if connected_here:
+                        try:
+                            await client.disconnect()
+                        except Exception:
+                            pass
             set_account_status(
                 account_name,
                 status="connected",
@@ -356,7 +362,13 @@ class TelegramService:
                     "checked_at": checked_at,
                     "needs_relogin": False,
                 }
-            if "SESSION" in err_upper and "INVALID" in err_upper:
+            # 仅匹配 Telegram API 精确错误码，避免误判含 "session" 和 "invalid" 的普通错误
+            if any(code in err_upper for code in (
+                "SESSION_REVOKED",
+                "SESSION_EXPIRED",
+                "AUTH_KEY_INVALID",
+                "SESSION_INVALID",
+            )):
                 set_account_status(
                     account_name,
                     status="invalid",
@@ -521,8 +533,8 @@ class TelegramService:
             return False
 
     async def start_login(
-        self, account_name: str, phone_number: str, proxy: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, account_name: str, phone_number: str, proxy: str | None = None
+    ) -> dict[str, Any]:
         """
         开始登录流程（发送验证码）
 
@@ -634,7 +646,6 @@ class TelegramService:
                 except OSError as e:
                     # 如果删除失败，说明真的被锁得很死，或者权限问题
                     logger.warning("删除旧 Session 文件失败 (可能仍被占用): %s", e)
-                    pass
 
         session_path = str(self.session_dir / account_name)
         client_kwargs = {
@@ -726,9 +737,9 @@ class TelegramService:
         phone_number: str,
         phone_code: str,
         phone_code_hash: str,
-        password: Optional[str] = None,
-        proxy: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        password: str | None = None,
+        proxy: str | None = None,
+    ) -> dict[str, Any]:
         """
         验证登录（输入验证码和可选的2FA密码）
 
@@ -897,7 +908,7 @@ class TelegramService:
                     pass
                 _login_sessions.pop(session_key, None)
                 _release_account_lock()
-            raise e
+            raise
         except Exception as e:
             # 清理 session
             try:
@@ -919,7 +930,7 @@ class TelegramService:
                 raise ValueError(f"登录失败: {error_msg}")
 
     async def _persist_client_session(
-        self, client, account_name: str, proxy: Optional[str] = None
+        self, client, account_name: str, proxy: str | None = None
     ) -> None:
         session_mode = get_session_mode()
         if session_mode == "string":
@@ -973,7 +984,7 @@ class TelegramService:
         self._accounts_cache = None
 
     def _log_qr_state(
-        self, login_id: str, state: str, data: Optional[Dict[str, Any]] = None
+        self, login_id: str, state: str, data: dict[str, Any] | None = None
     ) -> None:
         if not login_id:
             return
@@ -984,7 +995,7 @@ class TelegramService:
             data["last_state_logged"] = state
         logger.info("qr_login state=%s login_id=%s", state, login_id)
 
-    async def _apply_migrate_auth(self, client, data: Dict[str, Any]) -> None:
+    async def _apply_migrate_auth(self, client, data: dict[str, Any]) -> None:
         migrate_dc_id = data.get("migrate_dc_id")
         migrate_auth_key = data.get("migrate_auth_key")
         if migrate_dc_id and migrate_auth_key:
@@ -995,7 +1006,7 @@ class TelegramService:
                 pass
 
     @staticmethod
-    def _capture_migrate_auth(data: Dict[str, Any], session: Any) -> None:
+    def _capture_migrate_auth(data: dict[str, Any], session: Any) -> None:
         if not session:
             return
         try:
@@ -1050,7 +1061,7 @@ class TelegramService:
         if lock and lock.locked():
             lock.release()
 
-    def _extend_qr_expires(self, data: Dict[str, Any], min_seconds: int = 300) -> None:
+    def _extend_qr_expires(self, data: dict[str, Any], min_seconds: int = 300) -> None:
         now = int(time.time())
         min_expires = now + min_seconds
         current = int(data.get("expires_ts") or 0)
@@ -1076,8 +1087,8 @@ class TelegramService:
             return
 
     async def start_qr_login(
-        self, account_name: str, proxy: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, account_name: str, proxy: str | None = None
+    ) -> dict[str, Any]:
         import gc
 
         from pyrogram import Client, handlers, raw
@@ -1266,9 +1277,9 @@ class TelegramService:
             except Exception:
                 pass
             _release_account_lock()
-            raise ValueError(f"获取二维码失败: {str(e)}")
+            raise ValueError(f"获取二维码失败: {e!s}")
 
-    async def get_qr_login_status(self, login_id: str) -> Dict[str, Any]:
+    async def get_qr_login_status(self, login_id: str) -> dict[str, Any]:
         from pyrogram import raw, types
         from pyrogram.errors import FloodWait, SessionPasswordNeeded, Unauthorized
         from pyrogram.methods.messages.inline_session import get_session
@@ -1313,7 +1324,7 @@ class TelegramService:
         token = data.get("token")
         migrate_dc_id = data.get("migrate_dc_id")
 
-        async def _finalize_login(login_result: Any) -> Dict[str, Any]:
+        async def _finalize_login(login_result: Any) -> dict[str, Any]:
             # 标记授权用户
             user = types.User._parse(client, login_result.authorization.user)
             await client.storage.user_id(user.id)
@@ -1577,7 +1588,7 @@ class TelegramService:
                 "message": "登录失败，请重试",
             }
 
-    async def submit_qr_password(self, login_id: str, password: str) -> Dict[str, Any]:
+    async def submit_qr_password(self, login_id: str, password: str) -> dict[str, Any]:
         from pyrogram import raw, types
         from pyrogram.errors import (
             FloodWait,
@@ -1614,7 +1625,7 @@ class TelegramService:
 
         global_semaphore = get_global_semaphore()
 
-        async def _finalize_password_login(user_fallback=None) -> Dict[str, Any]:
+        async def _finalize_password_login(user_fallback=None) -> dict[str, Any]:
             user_from_password = None
             try:
                 if data.get("migrate_dc_id"):
@@ -1884,7 +1895,7 @@ class TelegramService:
                         ).isoformat() + "Z"
                     if data.get("token") != result.token:
                         data["token"] = result.token
-                    raise ValueError("请先在手机端确认登录")
+                    raise ValueError("请先在手机端确认登录")  # noqa: TRY004
 
                 if isinstance(result, raw.types.auth.LoginTokenSuccess):
                     user = types.User._parse(client, result.authorization.user)
@@ -1975,11 +1986,11 @@ class TelegramService:
         self,
         account_name: str,
         phone_number: str,
-        phone_code: Optional[str] = None,
-        phone_code_hash: Optional[str] = None,
-        password: Optional[str] = None,
-        proxy: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        phone_code: str | None = None,
+        phone_code_hash: str | None = None,
+        password: str | None = None,
+        proxy: str | None = None,
+    ) -> dict[str, Any]:
         """
         同步版本的登录方法（用于 FastAPI）
 
@@ -2020,13 +2031,13 @@ class TelegramService:
                     loop.close()
 
             return result
-        except Exception as e:
+        except Exception:  # noqa: TRY203
             # 重新抛出异常，保留原始错误信息
-            raise e
+            raise
 
 
 # 创建全局实例
-_telegram_service: Optional[TelegramService] = None
+_telegram_service: TelegramService | None = None
 
 
 def get_telegram_service() -> TelegramService:

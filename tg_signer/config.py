@@ -5,18 +5,14 @@ from functools import cached_property
 from typing import (
     Any,
     ClassVar,
-    Dict,
-    List,
     Literal,
-    Optional,
-    Tuple,
-    Type,
+    TypeAlias,
     Union,
 )
 
 from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError
 from pyrogram.types import Chat, Message
-from typing_extensions import Self, TypeAlias
+from typing_extensions import Self
 
 
 def get_display_width(text: str) -> int:
@@ -49,8 +45,8 @@ def pad_text_to_width(text: str, target_width: int, align: str = "left") -> str:
 
 
 class BaseJSONConfig(BaseModel):
-    version: ClassVar[Union[str, int]] = 0
-    olds: ClassVar[Optional[List[Type["BaseJSONConfig"]]]] = None
+    version: ClassVar[str | int] = 0
+    olds: ClassVar[list[type["BaseJSONConfig"]] | None] = None
     is_current: ClassVar[bool] = False
 
     class Config:
@@ -73,7 +69,7 @@ class BaseJSONConfig(BaseModel):
         return obj
 
     @classmethod
-    def load(cls, d: dict) -> Optional[Tuple[Self, bool]]:
+    def load(cls, d: dict) -> tuple[Self, bool] | None:
         if instance := cls.valid(d):
             return instance, False
         for old in cls.olds or []:
@@ -108,10 +104,10 @@ class SignConfigV1(BaseJSONConfig):
 class SignChatV2(BaseJSONConfig):
     version: ClassVar = 2
     chat_id: int
-    delete_after: Optional[int] = None
-    sign_text: Union[str, Literal["🎲", "🎯", "🏀", "⚽", "🎳", "🎰"]]
+    delete_after: int | None = None
+    sign_text: str | Literal["🎲", "🎯", "🏀", "⚽", "🎳", "🎰"]
     as_dice: bool = False  # 作为Dice类型的emoji进行发送
-    text_of_btn_to_click: Optional[str] = None  # 需要点击的按钮的文本
+    text_of_btn_to_click: str | None = None  # 需要点击的按钮的文本
     choose_option_by_image: bool = False  # 需要根据图片选择选项
     has_calculation_problem: bool = False  # 是否有计算题
 
@@ -129,7 +125,7 @@ class SignConfigV2(BaseJSONConfig):
     olds: ClassVar = [SignConfigV1]
     is_current: ClassVar = False
 
-    chats: List[SignChatV2]
+    chats: list[SignChatV2]
     sign_at: str  # 签到时间，time或crontab表达式
     random_seconds: int = 0
     sign_interval: int = 1  # 连续签到的间隔时间，单位秒
@@ -204,7 +200,7 @@ class SendTextAction(SignAction):
 
 class SendDiceAction(SignAction):
     action: Literal[SupportAction.SEND_DICE] = SupportAction.SEND_DICE
-    dice: Union[Literal["🎲", "🎯", "🏀", "⚽", "🎳", "🎰"], str]
+    dice: Literal["🎲", "🎯", "🏀", "⚽", "🎳", "🎰"] | str
 
 
 class ClickKeyboardByTextAction(SignAction):
@@ -218,7 +214,7 @@ class ChooseOptionByImageAction(SignAction):
     action: Literal[SupportAction.CHOOSE_OPTION_BY_IMAGE] = (
         SupportAction.CHOOSE_OPTION_BY_IMAGE
     )
-    question: Optional[str] = None  # 补充给 AI 的提示语，覆盖消息 caption 作为问题描述
+    question: str | None = None  # 补充给 AI 的提示语，覆盖消息 caption 作为问题描述
 
 
 class ReplyByCalculationProblemAction(SignAction):
@@ -240,40 +236,31 @@ class ClickButtonByCalculationProblemAction(SignAction):
 
 class KeywordNotifyAction(SignAction):
     action: Literal[SupportAction.KEYWORD_NOTIFY] = SupportAction.KEYWORD_NOTIFY
-    keywords: List[str]
+    keywords: list[str]
     match_mode: Literal["contains", "exact", "regex"] = "contains"
     ignore_case: bool = True
     push_channel: Literal["telegram", "forward", "bark", "custom", "continue"] = "telegram"
-    bark_url: Optional[str] = None
-    custom_url: Optional[str] = None
-    forward_chat_id: Optional[Union[int, str]] = None
-    forward_message_thread_id: Optional[int] = None
-    continue_chat_id: Optional[Union[int, str]] = None
-    continue_message_thread_id: Optional[int] = None
+    bark_url: str | None = None
+    custom_url: str | None = None
+    forward_chat_id: int | str | None = None
+    forward_message_thread_id: int | None = None
+    continue_chat_id: int | str | None = None
+    continue_message_thread_id: int | None = None
     continue_action_interval: float = 1
-    continue_actions: List[Dict[str, Any]] = Field(default_factory=list)
+    continue_actions: list[dict[str, Any]] = Field(default_factory=list)
 
 
-ActionT: TypeAlias = Union[
-    SendTextAction,
-    SendDiceAction,
-    ClickKeyboardByTextAction,
-    ChooseOptionByImageAction,
-    ReplyByCalculationProblemAction,
-    ReplyByImageRecognitionAction,
-    ClickButtonByCalculationProblemAction,
-    KeywordNotifyAction,
-]
+ActionT: TypeAlias = SendTextAction | SendDiceAction | ClickKeyboardByTextAction | ChooseOptionByImageAction | ReplyByCalculationProblemAction | ReplyByImageRecognitionAction | ClickButtonByCalculationProblemAction | KeywordNotifyAction
 
 
 class SignChatV3(BaseJSONConfig):
     version: ClassVar = 3
     chat_id: int
-    name: Optional[str] = None
-    delete_after: Optional[int] = None
-    actions: List[ActionT]
+    name: str | None = None
+    delete_after: int | None = None
+    actions: list[ActionT]
     action_interval: float = 1  # actions的间隔时间，单位秒
-    message_thread_id: Optional[int] = None
+    message_thread_id: int | None = None
 
     def __repr__(self) -> str:
         return (
@@ -379,7 +366,7 @@ class SignConfigV3(BaseJSONConfig):
     is_current: ClassVar = True
 
     _version: Literal[3] = 3
-    chats: List[SignChatV3]
+    chats: list[SignChatV3]
     sign_at: str  # 签到时间，time或crontab表达式
     random_seconds: int = 0
     sign_interval: int = 1  # 连续签到的间隔时间，单位秒
@@ -405,32 +392,32 @@ class UDPForward(BaseModel):
 class HttpCallback(BaseModel):
     type: Literal["http"] = "http"
     url: AnyHttpUrl
-    headers: Optional[Dict[str, str]] = None
+    headers: dict[str, str] | None = None
     method: Literal["post"] = "post"
 
 
 class MatchConfig(BaseJSONConfig):
-    chat_id: Union[int, str] = None  # 聊天id或username
+    chat_id: int | str = None  # 聊天id或username
     rule: MatchRuleT = "exact"  # 匹配规则
-    rule_value: Optional[str] = None  # 规则值
-    from_user_ids: Optional[List[Union[int, str]]] = (
+    rule_value: str | None = None  # 规则值
+    from_user_ids: list[int | str] | None = (
         None  # 发送者id或username，为空时，匹配所有人
     )
     always_ignore_me: bool = False  # 总是忽略自己发送的消息
-    default_send_text: Optional[str] = None  # 默认发送内容
+    default_send_text: str | None = None  # 默认发送内容
     ai_reply: bool = False  # 是否使用AI回复
-    ai_prompt: Optional[str] = None
-    send_text_search_regex: Optional[str] = None  # 用正则表达式从消息中提取发送内容
-    delete_after: Optional[int] = None
+    ai_prompt: str | None = None
+    send_text_search_regex: str | None = None  # 用正则表达式从消息中提取发送内容
+    delete_after: int | None = None
     ignore_case: bool = True  # 忽略大小写
-    forward_to_chat_id: Optional[Union[int, str]] = (
+    forward_to_chat_id: int | str | None = (
         None  # 转发消息到该聊天，默认为消息来源
     )
-    external_forwards: Optional[List[Union[UDPForward, HttpCallback]]] = (
+    external_forwards: list[UDPForward | HttpCallback] | None = (
         None  # 转发到外部
     )
     push_via_server_chan: bool = False  # 将消息通过server酱推送
-    server_chan_send_key: Optional[str] = None  # server酱的sendkey
+    server_chan_send_key: str | None = None  # server酱的sendkey
 
     def __str__(self):
         return (
@@ -521,7 +508,7 @@ class MonitorConfig(BaseJSONConfig):
 
     version: ClassVar = 1
     is_current: ClassVar = True
-    match_cfgs: List[MatchConfig]
+    match_cfgs: list[MatchConfig]
 
     @property
     def chat_ids(self):

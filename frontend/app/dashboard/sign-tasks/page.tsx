@@ -248,11 +248,18 @@ export default function SignTasksPage() {
                     setRunLogs(prev => [...prev, ...data.data]);
                 } else if (data.type === "done") {
                     setIsDone(true);
+                    ws.close();
                 }
+                // type === "ping" 心跳包，忽略即可
             };
 
             ws.onerror = (err) => {
                 console.error("WebSocket error:", err);
+            };
+
+            ws.onclose = () => {
+                // 连接意外关闭（网络断开/超时）时标记任务结束，避免 UI 卡住
+                setIsDone(true);
             };
 
             const result = await runSignTask(token, taskName, accountName);

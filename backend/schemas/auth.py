@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel
 
@@ -9,7 +8,7 @@ from pydantic import BaseModel
 class LoginRequest(BaseModel):
     username: str
     password: str
-    totp_code: Optional[str] = None
+    totp_code: str | None = None
 
 
 class TokenResponse(BaseModel):

@@ -82,7 +82,15 @@ ignore = [
     "C901", # too complex
     "W191", # indentation contains tabs
     "B019", # Use of `functools.lru_cache` or `functools.cache` on methods can lead to memory leaks
-    "B904"  # raise without from inside except
+    "B904", # raise without from inside except
+    "BLE001", # blind except Exception - common in Telegram/network code
+    "S110", # try-except-pass - use contextlib.suppress
+    "S112", # try-except-continue
+    "DTZ003", # datetime.utcnow() - timezone-unaware
+    "DTZ004", # datetime.utcfromtimestamp() - timezone-unaware
+    "DTZ005", # datetime.now() without tz - timezone-unaware
+    "DTZ007", # datetime.strptime() without tz - timezone-unaware
+    "ASYNC230", # blocking I/O in async function
 ]
 
 [tool.pytest.ini_options]

@@ -18,8 +18,7 @@ _original_sqlite3_connect = sqlite3.connect
 def _patched_sqlite3_connect(*args, **kwargs):
     # Force timeout to be at least 10 seconds, even if Pyrogram sets it to 1
     if "timeout" in kwargs:
-        if kwargs["timeout"] < 10:
-            kwargs["timeout"] = 10
+        kwargs["timeout"] = max(kwargs["timeout"], 10)
     else:
         kwargs["timeout"] = 30
     return _original_sqlite3_connect(*args, **kwargs)
@@ -27,22 +26,21 @@ def _patched_sqlite3_connect(*args, **kwargs):
 
 sqlite3.connect = _patched_sqlite3_connect
 
-from backend.api import router as api_router  # noqa: E402
-from backend.core.config import get_settings  # noqa: E402
-from backend.core.database import (  # noqa: E402
+from backend.api import router as api_router
+from backend.core.config import get_settings
+from backend.core.database import (
     Base,
     get_engine,
     get_session_local,
     init_engine,
 )
-from backend.scheduler import (  # noqa: E402
+from backend.scheduler import (
     init_scheduler,
     shutdown_scheduler,
     sync_jobs,
 )
-from backend.services.users import ensure_admin  # noqa: E402
-from backend.utils.paths import ensure_data_dirs  # noqa: E402
-
+from backend.services.users import ensure_admin
+from backend.utils.paths import ensure_data_dirs
 
 # ---------------------------------------------------------------------------
 # Unified logging configuration
@@ -107,6 +105,7 @@ def health_checkz() -> dict[str, str]:
 @app.get("/api/version")
 def get_version() -> dict[str, str]:
     import os
+
     from tg_signer import __version__
 
     # BUILD_DATE and BUILD_SHA are injected at Docker build time via ARG→ENV.
@@ -115,7 +114,8 @@ def get_version() -> dict[str, str]:
     build_sha = os.environ.get("BUILD_SHA", "")
 
     if not built_at:
-        import subprocess, shutil
+        import shutil
+        import subprocess
         if shutil.which("git"):
             try:
                 built_at = subprocess.check_output(
