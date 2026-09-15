@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -15,6 +16,12 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+# 当前正在执行的签到任务所属账号。asyncio Task 各自持有独立的上下文副本，
+# 因此并发任务之间不会互相影响，是比 threading.local 更适合协程的隔离方式。
+_current_task_account: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "task_account", default=""
+)
 
 from backend.core.config import get_settings
 from backend.utils.account_locks import get_account_lock
@@ -59,11 +66,11 @@ class _AccountTaskLogFilter(logging.Filter):
         self._account_name = account_name
 
     def filter(self, record: logging.LogRecord) -> bool:
-        # ERROR/CRITICAL 及带 exc_info 的日志（异常堆栈）无条件放行，
-        # 避免 core.py 内直接调用 logger.exception/warning 的错误被丢弃。
-        if record.levelno >= logging.ERROR or record.exc_info:
+        # 优先通过 ContextVar 判断：当前协程属于本账号任务，直接放行所有级别的日志
+        # （asyncio Task 各持独立上下文副本，并发任务不会互相干扰）
+        if _current_task_account.get("") == self._account_name:
             return True
-        # 普通 INFO/WARNING：精确匹配账号前缀，防止并发任务日志交叉污染
+        # 兜底：消息中含账号前缀时同样放行（兼容旧路径）
         return f"账户「{self._account_name}」" in record.getMessage()
 
 
@@ -1638,6 +1645,7 @@ class SignTaskService:
         has_keyword_monitor = False
         tg_logger = logging.getLogger("tg-signer")
         log_handler: TaskLogHandler | None = None
+        _cv_token = None
 
         # 标记运行中 + 挂载日志处理器，放在同一个 try 块内，确保 finally 能清理
         try:
@@ -1648,6 +1656,8 @@ class SignTaskService:
             log_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
             log_handler.addFilter(_AccountTaskLogFilter(account_name))
             tg_logger.addHandler(log_handler)
+            # 设置协程上下文：filter 通过 ContextVar 判断，无需依赖消息格式即可捕获所有日志
+            _cv_token = _current_task_account.set(account_name)
             task_cfg = self.get_task(task_name, account_name=account_name)
             if not task_cfg:
                 raise ValueError(f"Task {task_name} does not exist or cannot be loaded")
@@ -1803,6 +1813,8 @@ class SignTaskService:
             self._active_tasks.pop(task_key, None)
             if log_handler is not None:
                 tg_logger.removeHandler(log_handler)
+            if _cv_token is not None:
+                _current_task_account.reset(_cv_token)
 
             # 保存执行记录
             final_logs = list(self._active_logs.get(task_key, []))

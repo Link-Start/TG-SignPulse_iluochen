@@ -161,6 +161,10 @@ frontend/     Next.js 管理面板
 
 ## 更新日志
 
+### 2026-09-15（第五轮代码审查修复）
+
+- **修复并发日志隔离漏洞**：使用 `contextvars.ContextVar` 替代 ERROR 级别放行方案。asyncio 每个 Task 持有独立的 Context 副本，设置 `_current_task_account` 后 filter 可捕获该协程所有级别日志，不再通过账号前缀匹配，彻底消除多账号并发时的日志串台问题。
+
 ### 2026-09-15（第四轮代码审查修复）
 
 - **修复任务崩溃时日志丢失**：`_AccountTaskLogFilter` 现在无条件放行 ERROR 级别及带异常堆栈的日志，之前 `core.py` 内直接调用 `logger.exception` 的报错因不含账号前缀而被静默过滤，用户面板看到的日志为空。
