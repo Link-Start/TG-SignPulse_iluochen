@@ -59,7 +59,11 @@ class _AccountTaskLogFilter(logging.Filter):
         self._account_name = account_name
 
     def filter(self, record: logging.LogRecord) -> bool:
-        # log() 格式固定为 "账户「{account}」- 任务「{task}」:"，精确匹配防止子串误判
+        # ERROR/CRITICAL 及带 exc_info 的日志（异常堆栈）无条件放行，
+        # 避免 core.py 内直接调用 logger.exception/warning 的错误被丢弃。
+        if record.levelno >= logging.ERROR or record.exc_info:
+            return True
+        # 普通 INFO/WARNING：精确匹配账号前缀，防止并发任务日志交叉污染
         return f"账户「{self._account_name}」" in record.getMessage()
 
 
@@ -1475,47 +1479,43 @@ class SignTaskService:
                 local_chats: list[dict[str, Any]] = []
                 # __aenter__ 内已完成 session 有效性校验，无需再调 get_me()
                 async with account_lock, get_global_semaphore(), active_client:
+                    try:
+                        async for dialog in active_client.get_dialogs():
                             try:
-                                async for dialog in active_client.get_dialogs():
-                                    try:
-                                        chat = getattr(dialog, "chat", None)
-                                        if chat is None:
-                                            logger.warning(
-                                                "get_dialogs 返回空 chat，已跳过"
-                                            )
-                                            continue
-                                        chat_id = getattr(chat, "id", None)
-                                        if chat_id is None:
-                                            logger.warning(
-                                                "get_dialogs 返回 chat.id 为空，已跳过"
-                                            )
-                                            continue
+                                chat = getattr(dialog, "chat", None)
+                                if chat is None:
+                                    logger.warning("get_dialogs 返回空 chat，已跳过")
+                                    continue
+                                chat_id = getattr(chat, "id", None)
+                                if chat_id is None:
+                                    logger.warning("get_dialogs 返回 chat.id 为空，已跳过")
+                                    continue
 
-                                        chat_info = {
-                                            "id": chat_id,
-                                            "title": chat.title
-                                            or chat.first_name
-                                            or chat.username
-                                            or str(chat_id),
-                                            "username": chat.username,
-                                            "type": chat.type.name.lower(),
-                                        }
+                                chat_info = {
+                                    "id": chat_id,
+                                    "title": chat.title
+                                    or chat.first_name
+                                    or chat.username
+                                    or str(chat_id),
+                                    "username": chat.username,
+                                    "type": chat.type.name.lower(),
+                                }
 
-                                        # 特殊处理机器人和私聊
-                                        if chat.type == ChatType.BOT:
-                                            chat_info["title"] = f"🤖 {chat_info['title']}"
+                                # 特殊处理机器人和私聊
+                                if chat.type == ChatType.BOT:
+                                    chat_info["title"] = f"🤖 {chat_info['title']}"
 
-                                        local_chats.append(chat_info)
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"处理 dialog 失败，已跳过: {type(e).__name__}: {e}"
-                                        )
-                                        continue
+                                local_chats.append(chat_info)
                             except Exception as e:
-                                # Pyrogram 边界异常：保留已获取结果
                                 logger.warning(
-                                    f"get_dialogs 中断，返回已获取结果: {type(e).__name__}: {e}"
+                                    f"处理 dialog 失败，已跳过: {type(e).__name__}: {e}"
                                 )
+                                continue
+                    except Exception as e:
+                        # Pyrogram 边界异常：保留已获取结果
+                        logger.warning(
+                            f"get_dialogs 中断，返回已获取结果: {type(e).__name__}: {e}"
+                        )
                 return local_chats
 
             try:
@@ -1627,27 +1627,27 @@ class SignTaskService:
         task_key = self._task_key(account_name, task_name)
         if self._active_tasks.get(task_key):
             return {"success": False, "error": "任务已经在运行中", "output": ""}
-        self._active_tasks[task_key] = True
-        self._active_logs[task_key] = deque(maxlen=1000)
 
         account_lock = get_account_lock(account_name)
         logger.debug("等待获取账号锁 %s", account_name)
-
-        # 挂载日志处理器，过滤器防止多账号并发时日志交叉污染
-        tg_logger = logging.getLogger("tg-signer")
-        log_handler = TaskLogHandler(self._active_logs[task_key])
-        log_handler.setLevel(logging.INFO)
-        log_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
-        log_handler.addFilter(_AccountTaskLogFilter(account_name))
-        tg_logger.addHandler(log_handler)
 
         success = False
         error_msg = ""
         output_str = ""
         account_invalid_detected = False
         has_keyword_monitor = False
+        tg_logger = logging.getLogger("tg-signer")
+        log_handler: TaskLogHandler | None = None
 
+        # 标记运行中 + 挂载日志处理器，放在同一个 try 块内，确保 finally 能清理
         try:
+            self._active_tasks[task_key] = True
+            self._active_logs[task_key] = deque(maxlen=1000)
+            log_handler = TaskLogHandler(self._active_logs[task_key])
+            log_handler.setLevel(logging.INFO)
+            log_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+            log_handler.addFilter(_AccountTaskLogFilter(account_name))
+            tg_logger.addHandler(log_handler)
             task_cfg = self.get_task(task_name, account_name=account_name)
             if not task_cfg:
                 raise ValueError(f"Task {task_name} does not exist or cannot be loaded")
@@ -1801,7 +1801,8 @@ class SignTaskService:
         finally:
             self._account_last_run_end[account_name] = time.time()
             self._active_tasks.pop(task_key, None)
-            tg_logger.removeHandler(log_handler)
+            if log_handler is not None:
+                tg_logger.removeHandler(log_handler)
 
             # 保存执行记录
             final_logs = list(self._active_logs.get(task_key, []))

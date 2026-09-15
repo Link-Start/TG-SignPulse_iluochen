@@ -161,6 +161,12 @@ frontend/     Next.js 管理面板
 
 ## 更新日志
 
+### 2026-09-15（第四轮代码审查修复）
+
+- **修复任务崩溃时日志丢失**：`_AccountTaskLogFilter` 现在无条件放行 ERROR 级别及带异常堆栈的日志，之前 `core.py` 内直接调用 `logger.exception` 的报错因不含账号前缀而被静默过滤，用户面板看到的日志为空。
+- **修复任务 key 可能永久锁死**：`_active_tasks[task_key] = True` 与日志处理器挂载移入 `try` 块内，确保任何初始化异常都会由 `finally` 正确清理，不再需要重启服务才能恢复。
+- **修复 `_fetch_chats` 缩进错误**：`async with` 块体从 12 格错误缩进修正为标准 4 格，消除作用域误读隐患。
+
 ### 2026-09-15（逻辑优化）
 
 - **执行日志截断生效**：`SIGN_TASK_HISTORY_MAX_FLOW_LINES`（默认 5000 行）与 `SIGN_TASK_HISTORY_MAX_LINE_CHARS`（默认 2000 字符）此前只读取未生效，现已真正截断（保留尾部日志），防止历史文件无限膨胀。
