@@ -1524,8 +1524,12 @@ class KeywordMonitorService:
                     logger.error("关键词监控 watchdog 重启失败: %s", exc)
 
     async def stop(self) -> None:
-        if self._watchdog_task and not self._watchdog_task.done():
-            self._watchdog_task.cancel()
+        watchdog = self._watchdog_task
+        # watchdog 自身触发重启时会走到这里：不能取消当前正在运行的自己，
+        # 否则 CancelledError 会打断重启，客户端停到一半且 watchdog 随之退出，断线后再也不会自动恢复
+        if watchdog is not None and watchdog is not asyncio.current_task():
+            if not watchdog.done():
+                watchdog.cancel()
             self._watchdog_task = None
         for rule in self._rules:
             self._append_rule_log(

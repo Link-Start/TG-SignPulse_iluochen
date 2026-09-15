@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
 from collections import deque
 from datetime import datetime
@@ -158,7 +159,11 @@ class SignTaskService:
         self._last_run_results: dict[tuple[str, str], dict[str, Any]] = {}
         self._active_tasks: dict[tuple[str, str], bool] = {}  # (account, task) -> running
         self._cleanup_tasks: dict[tuple[str, str], asyncio.Task] = {}
+        self._background_jobs: set[asyncio.Task] = set()  # 持有后台协程强引用，防止被 GC
         self._tasks_cache = None  # 内存缓存
+        # 历史文件与 config.json 的 last_run 是「读-改-写」，同步路由在线程池中执行，
+        # 与事件循环中的任务收尾并发时需要加锁，避免互相覆盖丢记录
+        self._history_lock = threading.RLock()
         self._account_last_run_end: dict[str, float] = {}  # 账号最后一次结束时间
         self._account_cooldown_seconds = int(
             os.getenv("SIGN_TASK_ACCOUNT_COOLDOWN", "5")
@@ -496,12 +501,13 @@ class SignTaskService:
 
     def clear_account_history_logs(self, account_name: str) -> dict[str, int]:
         """清理某账号的历史日志，不影响其他账号"""
-        removed_files = 0
-        removed_entries = 0
-
         if not self.run_history_dir.exists():
             return {"removed_files": 0, "removed_entries": 0}
 
+        with self._history_lock:
+            return self._clear_account_history_logs_locked(account_name)
+
+    def _clear_account_history_logs_locked(self, account_name: str) -> dict[str, int]:
         def _count_entries(data: Any) -> int:
             if isinstance(data, list):
                 return len(data)
@@ -509,6 +515,8 @@ class SignTaskService:
                 return 1
             return 0
 
+        removed_files = 0
+        removed_entries = 0
         tasks = self.list_tasks(account_name=account_name)
         for task in tasks:
             task_name = task.get("name") or ""
@@ -530,8 +538,9 @@ class SignTaskService:
                 except Exception:
                     pass
 
-            if self._tasks_cache is not None:
-                for t in self._tasks_cache:
+            cached_tasks = self._tasks_cache
+            if cached_tasks is not None:
+                for t in cached_tasks:
                     if t["name"] == task_name and t.get("account_name") == account_name:
                         t.pop("last_run", None)
                         break
@@ -663,49 +672,51 @@ class SignTaskService:
             "flow_line_count": flow_line_count,
         }
 
-        history = []
-        if history_file.exists():
-            try:
-                with open(history_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        history = data
-                    else:
-                        history = [data]
-            except Exception:
-                history = []
-
-        history.insert(0, new_entry)
-        # 只保留最近 N 条
-        history = history[: self._history_max_entries]
-
-        try:
-            self._atomic_write_json(history_file, history)
-
-            # 同时更新任务配置中的 last_run
-            # 1. 更新磁盘上的 config.json（直接构造路径，避免调用 get_task 多读一次磁盘）
-            task_dir = self.signs_dir / account_name / task_name
-            if not task_dir.exists():
-                task_dir = self.signs_dir / task_name
-            config_file = task_dir / "config.json"
-            if config_file.exists():
+        with self._history_lock:
+            history = []
+            if history_file.exists():
                 try:
-                    with open(config_file, "r", encoding="utf-8") as f:
-                        config = json.load(f)
-                    config["last_run"] = new_entry
-                    self._atomic_write_json(config_file, config)
-                except Exception as e:
-                    logger.warning("更新任务配置 last_run 失败: %s", e)
+                    with open(history_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            history = data
+                        else:
+                            history = [data]
+                except Exception:
+                    history = []
 
-            # 2. 更新内存缓存 (关键优化：避免置空 self._tasks_cache)
-            if self._tasks_cache is not None:
-                for t in self._tasks_cache:
-                    if t["name"] == task_name and t.get("account_name") == account_name:
-                        t["last_run"] = new_entry
-                        break
+            history.insert(0, new_entry)
+            # 只保留最近 N 条
+            history = history[: self._history_max_entries]
 
-        except Exception as e:
-            logger.warning("保存运行信息失败: %s", e)
+            try:
+                self._atomic_write_json(history_file, history)
+
+                # 同时更新任务配置中的 last_run
+                # 1. 更新磁盘上的 config.json（直接构造路径，避免调用 get_task 多读一次磁盘）
+                task_dir = self.signs_dir / account_name / task_name
+                if not task_dir.exists():
+                    task_dir = self.signs_dir / task_name
+                config_file = task_dir / "config.json"
+                if config_file.exists():
+                    try:
+                        with open(config_file, "r", encoding="utf-8") as f:
+                            config = json.load(f)
+                        config["last_run"] = new_entry
+                        self._atomic_write_json(config_file, config)
+                    except Exception as e:
+                        logger.warning("更新任务配置 last_run 失败: %s", e)
+
+                # 2. 更新内存缓存 (关键优化：避免置空 self._tasks_cache)
+                cached_tasks = self._tasks_cache
+                if cached_tasks is not None:
+                    for t in cached_tasks:
+                        if t["name"] == task_name and t.get("account_name") == account_name:
+                            t["last_run"] = new_entry
+                            break
+
+            except Exception as e:
+                logger.warning("保存运行信息失败: %s", e)
 
     @staticmethod
     def _atomic_write_json(path: Path, data: Any) -> None:
@@ -913,14 +924,9 @@ class SignTaskService:
         """
         获取所有签到任务列表 (支持内存缓存)
         """
-        if self._tasks_cache is not None and not force_refresh:
-            if account_name:
-                return [
-                    t
-                    for t in self._tasks_cache
-                    if t.get("account_name") == account_name
-                ]
-            return self._tasks_cache
+        cached_tasks = self._tasks_cache
+        if cached_tasks is not None and not force_refresh:
+            return self._copy_tasks(cached_tasks, account_name)
 
         tasks = []
         base_dir = self.signs_dir
@@ -948,21 +954,26 @@ class SignTaskService:
                     if task_info:
                         tasks.append(task_info)
 
-            self._tasks_cache = sorted(
+            cached_tasks = sorted(
                 tasks, key=lambda x: (x["account_name"], x["name"])
             )
-
-            if account_name:
-                return [
-                    t
-                    for t in self._tasks_cache
-                    if t.get("account_name") == account_name
-                ]
-            return self._tasks_cache
+            self._tasks_cache = cached_tasks
+            return self._copy_tasks(cached_tasks, account_name)
 
         except Exception:
             logger.exception("扫描任务目录出错")
             return []
+
+    @staticmethod
+    def _copy_tasks(
+        tasks: list[dict[str, Any]], account_name: str | None = None
+    ) -> list[dict[str, Any]]:
+        """返回缓存条目的浅拷贝，防止调用方（如注入 next_run_time）改动共享缓存"""
+        return [
+            dict(t)
+            for t in tasks
+            if not account_name or t.get("account_name") == account_name
+        ]
 
     def _load_task_config(self, task_dir: Path) -> dict[str, Any] | None:
         """加载单个任务配置，优先使用 config.json 中的 last_run"""
@@ -1195,8 +1206,13 @@ class SignTaskService:
         try:
             from backend.scheduler import (
                 add_or_update_sign_task_job,
+                clear_pending_range_runs,
                 schedule_range_catchup,
             )
+
+            schedule_fields = ("sign_at", "execution_mode", "range_start", "range_end")
+            if any(existing.get(f) != config.get(f) for f in schedule_fields):
+                clear_pending_range_runs(config["account_name"], task_name)
 
             add_or_update_sign_task_job(
                 config["account_name"],
@@ -1608,6 +1624,11 @@ class SignTaskService:
         """
         return await self.run_task_with_logs(account_name, task_name)
 
+    def _spawn_background(self, coro) -> None:
+        job = asyncio.create_task(coro)
+        self._background_jobs.add(job)
+        job.add_done_callback(self._background_jobs.discard)
+
     def _task_key(self, account_name: str, task_name: str) -> tuple[str, str]:
         return account_name, task_name
 
@@ -1858,7 +1879,6 @@ class SignTaskService:
             logger.exception(error_msg)
         finally:
             self._account_last_run_end[account_name] = time.time()
-            self._active_tasks.pop(task_key, None)
             if log_handler is not None:
                 tg_logger.removeHandler(log_handler)
             if _cv_token is not None:
@@ -1917,23 +1937,33 @@ class SignTaskService:
                         output_str = "\n".join(final_logs)
 
             msg = error_msg if not success else last_reply
-            self._save_run_info(
-                task_name,
-                success,
-                msg,
-                account_name,
-                flow_logs=final_logs,
-            )
-
-            if not success and not account_invalid_detected:
-                await self._send_failure_notification(
-                    account_name,
+            try:
+                self._save_run_info(
                     task_name,
-                    error_msg or msg,
+                    success,
+                    msg,
+                    account_name,
                     flow_logs=final_logs,
                 )
+            finally:
+                # 先写结果、再清「运行中」标记：WebSocket 看到任务结束时一定能拿到成功/失败结果
+                self._last_run_results[task_key] = {"success": success, "error": error_msg}
+                self._active_tasks.pop(task_key, None)
+
+            # Bot 通知涉及网络请求，放到后台发送，不拖慢任务收尾和下一个任务
+            if not success and not account_invalid_detected:
+                self._spawn_background(
+                    self._send_failure_notification(
+                        account_name,
+                        task_name,
+                        error_msg or msg,
+                        flow_logs=final_logs,
+                    )
+                )
             elif success:
-                await self._send_success_notification(account_name, task_name, msg)
+                self._spawn_background(
+                    self._send_success_notification(account_name, task_name, msg)
+                )
 
             # 延迟清理日志（同一 task_key 仅保留一个 cleanup 协程）
             old_cleanup_task = self._cleanup_tasks.get(task_key)
@@ -1958,11 +1988,10 @@ class SignTaskService:
                     from backend.services.keyword_monitor import (
                         get_keyword_monitor_service,
                     )
-                    asyncio.create_task(get_keyword_monitor_service().restart_from_tasks())
+                    self._spawn_background(get_keyword_monitor_service().restart_from_tasks())
                 except Exception:
                     pass
 
-        self._last_run_results[task_key] = {"success": success, "error": error_msg}
         return {
             "success": success,
             "output": output_str,

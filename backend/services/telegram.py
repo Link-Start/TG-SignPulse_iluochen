@@ -40,6 +40,61 @@ logger = logging.getLogger("backend.telegram")
 _login_sessions = {}
 _qr_login_sessions = {}
 
+# 手机号登录在发送验证码后会一直持有账号锁、保持连接，直到验证完成。
+# 用户中途放弃（关闭弹窗、未输入验证码 / 2FA 密码）时需要超时回收，否则该账号的签到任务会永久阻塞在账号锁上
+_PHONE_LOGIN_TTL_SECONDS = max(int(os.getenv("PHONE_LOGIN_TTL_SECONDS", "600") or 600), 60)
+_background_jobs: set[asyncio.Task] = set()
+
+
+def _spawn_background(coro) -> None:
+    job = asyncio.create_task(coro)
+    _background_jobs.add(job)
+    job.add_done_callback(_background_jobs.discard)
+
+
+class _LoginLockHold:
+    """登录流程对账号锁的持有凭证。
+
+    asyncio.Lock 不记录持有者，仅凭 locked() 判断就释放，可能把签到任务正在持有的锁放掉
+    （如重复提交验证码、超时回收与验证并发时）。这里记录本次登录是否真正持有，释放幂等。
+    """
+
+    __slots__ = ("held", "lock")
+
+    def __init__(self, lock: asyncio.Lock):
+        self.lock = lock
+        self.held = False
+
+    async def acquire(self) -> None:
+        if self.held:
+            return
+        await self.lock.acquire()
+        self.held = True
+
+    def release(self) -> None:
+        if self.held:
+            self.held = False
+            self.lock.release()
+
+
+async def _expire_phone_login(session_key: str, client: Any, ttl: float) -> None:
+    await asyncio.sleep(ttl)
+    # 正在提交验证码时不打断，等本次验证结束再判断
+    while (data := _login_sessions.get(session_key)) and data.get("busy"):
+        await asyncio.sleep(1)
+    # 已完成/已被新的登录替换时不处理
+    if not data or data.get("client") is not client:
+        return
+    _login_sessions.pop(session_key, None)
+    hold = data.get("lock")
+    if hold:
+        hold.release()
+    try:
+        await client.disconnect()
+    except Exception:
+        pass
+    logger.info("手机号登录会话 %s 超时未完成，已释放账号锁并断开连接", session_key)
+
 
 class TelegramService:
     """Telegram 服务类"""
@@ -296,10 +351,9 @@ class TelegramService:
 
         try:
             lock = get_account_lock(account_name)
-            async with lock:
-                # 使用上下文管理器，正确维护 _CLIENT_REFS 引用计数
-                async with client:
-                    me = await asyncio.wait_for(client.get_me(), timeout=timeout_seconds)
+            # 使用上下文管理器，正确维护 _CLIENT_REFS 引用计数
+            async with lock, client:
+                me = await asyncio.wait_for(client.get_me(), timeout=timeout_seconds)
             set_account_status(
                 account_name,
                 status="connected",
@@ -580,9 +634,9 @@ class TelegramService:
         for key, value in _login_sessions.items():
             if key.startswith(f"{account_name}_"):
                 old_client = value.get("client")
-                old_lock = value.get("lock")
-                if old_lock and old_lock.locked():
-                    old_lock.release()
+                old_hold = value.get("lock")
+                if old_hold:
+                    old_hold.release()
                 if old_client:
                     try:
                         await old_client.disconnect()
@@ -594,11 +648,9 @@ class TelegramService:
             _login_sessions.pop(key, None)
 
         # 获取账号锁，避免与任务并发写 session
-        await account_lock.acquire()
-
-        def _release_account_lock() -> None:
-            if account_lock.locked():
-                account_lock.release()
+        lock_hold = _LoginLockHold(account_lock)
+        await lock_hold.acquire()
+        _release_account_lock = lock_hold.release
 
         # 2. 确保没有后台任务占用
         try:
@@ -691,9 +743,12 @@ class TelegramService:
                 "client": client,
                 "phone_code_hash": sent_code.phone_code_hash,
                 "phone_number": phone_number,
-                "lock": account_lock,
+                "lock": lock_hold,
                 "account_name": account_name,
             }
+            _spawn_background(
+                _expire_phone_login(session_key, client, _PHONE_LOGIN_TTL_SECONDS)
+            )
 
             # 保持连接，避免 session 变化导致验证码失效 (PhoneCodeExpired)
             # 断开连接会导致服务端重新分配 Session ID，从而使之前的 hash 失效
@@ -784,11 +839,14 @@ class TelegramService:
         session_mode = get_session_mode()
         global_semaphore = get_global_semaphore()
 
-        account_lock = session_data.get("lock")
+        if session_data.get("busy"):
+            raise ValueError("正在验证中，请勿重复提交")
+
+        lock_hold: _LoginLockHold | None = session_data.get("lock")
 
         def _release_account_lock() -> None:
-            if account_lock and account_lock.locked():
-                account_lock.release()
+            if lock_hold:
+                lock_hold.release()
 
         async def _persist_session_string() -> None:
             if session_mode != "string":
@@ -819,10 +877,10 @@ class TelegramService:
 
                 set_account_profile(account_name, proxy=proxy)
 
-        if account_lock and not account_lock.locked():
-            await account_lock.acquire()
-
+        session_data["busy"] = True
         try:
+            if lock_hold:
+                await lock_hold.acquire()
             async with global_semaphore:
                 # 重新连接 (因为 start_login 中断开了)
                 if not client.is_connected:
@@ -940,6 +998,8 @@ class TelegramService:
                 raise ValueError("此账号启用了两步验证，请输入 2FA 密码")
             else:
                 raise ValueError(f"登录失败: {error_msg}")
+        finally:
+            session_data["busy"] = False
 
     async def _persist_client_session(
         self, client, account_name: str, proxy: str | None = None
@@ -1069,9 +1129,9 @@ class TelegramService:
                                     aux_file.unlink()
                         except Exception:
                             pass
-        lock = data.get("lock")
-        if lock and lock.locked():
-            lock.release()
+        hold = data.get("lock")
+        if hold:
+            hold.release()
 
     def _extend_qr_expires(self, data: dict[str, Any], min_seconds: int = 300) -> None:
         now = int(time.time())
@@ -1117,11 +1177,9 @@ class TelegramService:
             if value.get("account_name") == account_name:
                 await self._cleanup_qr_login(key)
 
-        await account_lock.acquire()
-
-        def _release_account_lock() -> None:
-            if account_lock.locked():
-                account_lock.release()
+        lock_hold = _LoginLockHold(account_lock)
+        await lock_hold.acquire()
+        _release_account_lock = lock_hold.release
 
         # 清理后台客户端
         try:
@@ -1222,7 +1280,7 @@ class TelegramService:
                 "expires_at": expires_at,
                 "status": "waiting_scan",
                 "scan_seen": False,
-                "lock": account_lock,
+                "lock": lock_hold,
                 "migrate_dc_id": getattr(result, "dc_id", None),
                 "api_id": api_id,
                 "api_hash": api_hash,
@@ -1268,7 +1326,7 @@ class TelegramService:
             except Exception:
                 pass
 
-            asyncio.create_task(self._expire_qr_login(login_id, expires_ts))
+            _spawn_background(self._expire_qr_login(login_id, expires_ts))
 
             return {
                 "login_id": login_id,
@@ -1631,9 +1689,9 @@ class TelegramService:
             await self._cleanup_qr_login(login_id)
             raise ValueError("登录会话已失效")
 
-        account_lock = data.get("lock")
-        if account_lock and not account_lock.locked():
-            await account_lock.acquire()
+        lock_hold: _LoginLockHold | None = data.get("lock")
+        if lock_hold:
+            await lock_hold.acquire()
 
         global_semaphore = get_global_semaphore()
 

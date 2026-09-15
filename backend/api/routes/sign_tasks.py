@@ -481,14 +481,23 @@ def search_account_chats(
         raise HTTPException(status_code=500, detail=f"搜索对话列表失败: {e!s}")
 
 
+WS_CLOSE_UNAUTHORIZED = 4401
+
+
 @router.websocket("/ws/{task_name}")
 async def sign_task_logs_ws(
     websocket: WebSocket,
     task_name: str,
     account_name: str = Query(...),
     token: str = Query(...),
+    run_id: int | None = Query(None),
+    cursor: int = Query(0, ge=0),
+    monitor_cursor: int = Query(0, ge=0),
 ):
-    """WebSocket 实时推送签到任务日志（按累计序号增量推送，不受缓冲滚动影响）"""
+    """WebSocket 实时推送签到任务日志（按累计序号增量推送，不受缓冲滚动影响）
+
+    断线重连时客户端带上最后收到的 run_id / cursor / monitor_cursor，从断点续传，不重复推送。
+    """
     # 鉴权用短生命周期会话，避免长连接期间一直占用数据库连接
     try:
         with get_session_local()() as db:
@@ -496,7 +505,10 @@ async def sign_task_logs_ws(
     except Exception:
         user = None
     if not user:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        # 先 accept 再以 4401 关闭：握手前拒绝时浏览器只能看到 1006，无法与网络断线区分，
+        # 前端会徒劳重连；4401 让前端识别为登录失效，直接停止重连并回到登录页
+        await websocket.accept()
+        await websocket.close(code=WS_CLOSE_UNAUTHORIZED)
         return
 
     await websocket.accept()
@@ -512,10 +524,7 @@ async def sign_task_logs_ws(
     loop = asyncio.get_running_loop()
     started_at = loop.time()
     last_send = started_at
-    run_id: int | None = None
-    cursor = 0
-    monitor_cursor = 0
-    monitor_header_sent = False
+    monitor_header_sent = monitor_cursor > 0
 
     try:
         while True:
@@ -541,7 +550,14 @@ async def sign_task_logs_ws(
 
             if lines:
                 await websocket.send_json(
-                    {"type": "logs", "data": lines, "is_running": running}
+                    {
+                        "type": "logs",
+                        "data": lines,
+                        "is_running": running,
+                        "run_id": run_id,
+                        "cursor": cursor,
+                        "monitor_cursor": monitor_cursor,
+                    }
                 )
                 last_send = now
 

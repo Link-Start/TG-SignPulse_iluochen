@@ -28,6 +28,9 @@ def init_engine() -> None:
     def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
+        # WAL 下 NORMAL 仍保证崩溃后数据库一致，只减少 fsync 次数，降低写入延迟与锁等待
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.close()
 
     _engine = engine

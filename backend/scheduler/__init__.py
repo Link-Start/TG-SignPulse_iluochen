@@ -13,6 +13,34 @@ from backend.services.tasks import run_task_once
 scheduler: AsyncIOScheduler | None = None
 logger = logging.getLogger("backend.scheduler")
 
+# 签到任务的一次性辅助 job（失败重试 / range 随机执行 / 窗口补执行）后缀，
+# 它们的 id 与主 job 同样以 sign- 开头，同步时必须随主任务保留或清理，不能被当作过期 job 删除
+_SIGN_AUX_JOB_SUFFIXES = ("-retry", "-range-run", "-catchup")
+
+
+def _sign_job_id(account_name: str, task_name: str) -> str:
+    return f"sign-{account_name}-{task_name}"
+
+
+def _sign_aux_job_ids(account_name: str, task_name: str) -> list[str]:
+    base = _sign_job_id(account_name, task_name)
+    return [base + suffix for suffix in _SIGN_AUX_JOB_SUFFIXES]
+
+
+def _remove_job_quietly(job_id: str) -> None:
+    """移除 job；一次性 job 可能在期间已触发并被自动移除，忽略不存在的情况"""
+    if not scheduler:
+        return
+    try:
+        if scheduler.get_job(job_id):
+            scheduler.remove_job(job_id)
+    except Exception as e:
+        logger.debug("移除 job %s 失败（可能已执行完毕）: %s", job_id, e)
+
+
+def _has_pending_job(job_id: str) -> bool:
+    return bool(scheduler and scheduler.get_job(job_id))
+
 
 def create_cron_trigger(cron_str: str) -> CronTrigger:
     """自动解析格式并创建 CronTrigger，支持 5位和6位 cron 表达式以及 HH:MM 或 HH:MM:SS"""
@@ -65,7 +93,7 @@ def _schedule_task_retry(account_name: str, task_name: str) -> None:
 
     from apscheduler.triggers.date import DateTrigger
 
-    retry_id = f"sign-{account_name}-{task_name}-retry"
+    retry_id = f"{_sign_job_id(account_name, task_name)}-retry"
     run_at = datetime.now() + timedelta(seconds=TASK_RETRY_DELAY_SECONDS)
     try:
         scheduler.add_job(
@@ -93,8 +121,13 @@ async def _job_run_sign_task(
 
     prefix = "[重试] " if is_retry else ""
     try:
-        logger.info("%s开始执行签到任务 %s (账号: %s)", prefix, task_name, account_name)
         sign_task_service = get_sign_task_service()
+        task = sign_task_service.get_task(task_name, account_name=account_name)
+        if not task or not task.get("enabled", True):
+            # 任务已删除或停用时遗留的一次性 job，直接跳过，也不再注册重试
+            logger.info("%s签到任务 %s (账号: %s) 不存在或已停用，跳过", prefix, task_name, account_name)
+            return
+        logger.info("%s开始执行签到任务 %s (账号: %s)", prefix, task_name, account_name)
         result = await sign_task_service.run_task_with_logs(account_name, task_name)
         if result.get("success"):
             logger.info("%s任务 %s 执行成功", prefix, task_name)
@@ -148,7 +181,7 @@ def _schedule_range_random_run(account_name: str, task_name: str, st: dict) -> N
         delay = random.uniform(0, remaining)
         run_at = now + timedelta(seconds=delay)
         # 使用独立 job_id，避免与 schedule_range_catchup 的补执行任务互相覆盖
-        job_id = f"sign-{account_name}-{task_name}-range-run"
+        job_id = f"{_sign_job_id(account_name, task_name)}-range-run"
 
         scheduler.add_job(
             _job_run_sign_task,
@@ -270,9 +303,14 @@ def schedule_range_catchup(account_name: str, task_name: str, st: dict) -> None:
         if remaining <= 0:
             return
 
+        # 今日已排好随机执行或补执行时不重复安排，避免同一天跑两次、或每次同步都重新随机时间
+        base_id = _sign_job_id(account_name, task_name)
+        if _has_pending_job(f"{base_id}-range-run") or _has_pending_job(f"{base_id}-catchup"):
+            return
+
         delay = random.uniform(0, remaining)
         run_at = now + timedelta(seconds=delay)
-        catchup_id = f"sign-{account_name}-{task_name}-catchup"
+        catchup_id = f"{base_id}-catchup"
 
         scheduler.add_job(
             _job_run_sign_task,
@@ -339,14 +377,16 @@ async def sync_jobs() -> None:
                 logger.warning("Skip scheduling sign task with missing account/name: %s", st)
                 continue
 
-            job_id = f"sign-{account_name}-{task_name}"
-            desired_ids.add(job_id)
+            job_id = _sign_job_id(account_name, task_name)
+            aux_ids = _sign_aux_job_ids(account_name, task_name)
 
-            # SignTask 目前默认都是启用的，或者根据 st['enabled']
             if not st.get("enabled", True):
-                if job_id in existing_ids:
-                    scheduler.remove_job(job_id)
+                # 停用：主 job 与待执行的重试/随机执行一并移除（交给下方统一清理）
                 continue
+
+            desired_ids.add(job_id)
+            # 启用中的任务保留已排队的重试/随机执行/补执行
+            desired_ids.update(aux_ids)
 
             try:
                 is_range = st.get("execution_mode") == "range" and st.get("range_start")
@@ -377,9 +417,9 @@ async def sync_jobs() -> None:
             except Exception as e:
                 logger.error("Error scheduling sign task %s: %s", task_name, e)
 
-        # remove obsolete jobs
+        # remove obsolete jobs（已删除/停用任务的主 job 与辅助 job）
         for job_id in existing_ids - desired_ids:
-            scheduler.remove_job(job_id)
+            _remove_job_quietly(job_id)
     finally:
         db.close()
 
@@ -439,7 +479,7 @@ def add_or_update_sign_task_job(
     if not scheduler:
         return
 
-    job_id = f"sign-{account_name}-{task_name}"
+    job_id = _sign_job_id(account_name, task_name)
 
     if not enabled:
         remove_sign_task_job(account_name, task_name)
@@ -472,15 +512,24 @@ def add_or_update_sign_task_job(
         logger.error("添加任务 %s 失败: %s", job_id, e)
 
 
+def clear_pending_range_runs(account_name: str, task_name: str) -> None:
+    """清除已排好的 range 随机执行 / 补执行（调度时间变更后按新窗口重新安排）"""
+    base_id = _sign_job_id(account_name, task_name)
+    _remove_job_quietly(f"{base_id}-range-run")
+    _remove_job_quietly(f"{base_id}-catchup")
+
+
 def remove_sign_task_job(account_name: str, task_name: str) -> None:
     """动态移除签到任务 Job"""
     if not scheduler:
         return
 
-    job_id = f"sign-{account_name}-{task_name}"
+    job_id = _sign_job_id(account_name, task_name)
     try:
         if scheduler.get_job(job_id):
             scheduler.remove_job(job_id)
             logger.info("已移除任务 %s", job_id)
     except Exception as e:
         logger.error("移除任务 %s 失败: %s", job_id, e)
+    for aux_id in _sign_aux_job_ids(account_name, task_name):
+        _remove_job_quietly(aux_id)

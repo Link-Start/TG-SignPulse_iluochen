@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getToken } from "../../../lib/auth";
+import { getToken, logout } from "../../../lib/auth";
 import {
     listSignTasks,
     deleteSignTask,
@@ -141,6 +141,9 @@ import { useLanguage } from "../../../context/LanguageContext";
 
 // 与后端日志缓冲上限一致，避免长任务日志无限增长导致弹窗卡顿
 const MAX_RUN_LOG_LINES = 1000;
+const WS_MAX_RETRIES = 5;
+// 与后端 sign_tasks WS 约定的「登录失效」关闭码
+const WS_CLOSE_UNAUTHORIZED = 4401;
 
 export default function SignTasksPage() {
     const router = useRouter();
@@ -163,6 +166,7 @@ export default function SignTasksPage() {
     const [togglingTask, setTogglingTask] = useState<string | null>(null);
 
     const runWsRef = useRef<WebSocket | null>(null);
+    const runReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const addToastRef = useRef(addToast);
     const tRef = useRef(t);
 
@@ -177,9 +181,9 @@ export default function SignTasksPage() {
         return code ? `${base} (${code})` : base;
     }, []);
 
-    const loadData = useCallback(async (tokenStr: string) => {
+    const loadData = useCallback(async (tokenStr: string, silent = false) => {
         try {
-            setLoading(true);
+            if (!silent) setLoading(true);
             const [tasksData, accountsData] = await Promise.all([
                 listSignTasks(tokenStr),
                 listAccounts(tokenStr),
@@ -188,11 +192,11 @@ export default function SignTasksPage() {
             setAccounts(accountsData.accounts);
         } catch (err: any) {
             const toast = addToastRef.current;
-            if (toast) {
+            if (toast && !silent) {
                 toast(formatErrorMessage("load_failed", err), "error");
             }
         } finally {
-            setLoading(false);
+            if (!silent) setLoading(false);
         }
     }, [formatErrorMessage]);
 
@@ -227,6 +231,10 @@ export default function SignTasksPage() {
     };
 
     const closeRunSocket = useCallback(() => {
+        if (runReconnectTimerRef.current) {
+            clearTimeout(runReconnectTimerRef.current);
+            runReconnectTimerRef.current = null;
+        }
         const ws = runWsRef.current;
         runWsRef.current = null;
         if (ws && ws.readyState !== WebSocket.CLOSED) {
@@ -269,42 +277,95 @@ export default function SignTasksPage() {
             const host = window.location.port === "3000"
                 ? window.location.hostname + ":8080"
                 : window.location.host;
-            const wsParams = new URLSearchParams({ token, account_name: accountName });
-            const wsUrl = `${protocol}//${host}/api/sign-tasks/ws/${encodeURIComponent(taskName)}?${wsParams.toString()}`;
-            const ws = new WebSocket(wsUrl);
-            runWsRef.current = ws;
 
-            ws.onmessage = (event) => {
-                if (runWsRef.current !== ws) return;
-                const data = JSON.parse(event.data);
-                if (data.type === "logs") {
-                    setRunLogs(prev => {
-                        const next = prev.concat(data.data);
-                        return next.length > MAX_RUN_LOG_LINES ? next.slice(-MAX_RUN_LOG_LINES) : next;
-                    });
-                } else if (data.type === "done") {
-                    setIsDone(true);
-                    if (data.success === true) {
-                        addToast(t("task_run_success").replace("{name}", taskName), "success");
-                    } else if (data.success === false) {
-                        addToast(data.error || t("task_run_failed"), "error");
+            // 断点信息：意外断线后带上它们重连，服务端从断点续传，日志不重复不丢失
+            const resume = { runId: null as number | null, cursor: 0, monitorCursor: 0 };
+            let retries = 0;
+            let finished = false;
+
+            const connect = () => {
+                const wsParams = new URLSearchParams({
+                    token,
+                    account_name: accountName,
+                    cursor: String(resume.cursor),
+                    monitor_cursor: String(resume.monitorCursor),
+                });
+                if (resume.runId !== null) wsParams.set("run_id", String(resume.runId));
+                const wsUrl = `${protocol}//${host}/api/sign-tasks/ws/${encodeURIComponent(taskName)}?${wsParams.toString()}`;
+                const ws = new WebSocket(wsUrl);
+                runWsRef.current = ws;
+
+                ws.onmessage = (event) => {
+                    if (runWsRef.current !== ws) return;
+                    let data: any;
+                    try {
+                        data = JSON.parse(event.data);
+                    } catch {
+                        return;
                     }
-                    ws.close();
-                }
-                // type === "ping" 心跳包，忽略即可
-            };
+                    retries = 0;
+                    if (data.type === "logs") {
+                        if (typeof data.run_id === "number") {
+                            // 任务重新启动过：服务端会从头推送新一次运行的日志
+                            if (resume.runId !== null && data.run_id !== resume.runId) {
+                                setRunLogs([]);
+                            }
+                            resume.runId = data.run_id;
+                        }
+                        if (typeof data.cursor === "number") resume.cursor = data.cursor;
+                        if (typeof data.monitor_cursor === "number") resume.monitorCursor = data.monitor_cursor;
+                        setRunLogs(prev => {
+                            const next = prev.concat(data.data);
+                            return next.length > MAX_RUN_LOG_LINES ? next.slice(-MAX_RUN_LOG_LINES) : next;
+                        });
+                    } else if (data.type === "done") {
+                        finished = true;
+                        setIsDone(true);
+                        if (data.success === true) {
+                            addToast(t("task_run_success").replace("{name}", taskName), "success");
+                        } else if (data.success === false) {
+                            addToast(data.error || t("task_run_failed"), "error");
+                        }
+                        ws.close();
+                        // 刷新列表中的「上次运行」状态
+                        loadData(token, true);
+                    }
+                    // type === "ping" 心跳包，忽略即可
+                };
 
-            ws.onerror = (err) => {
-                console.error("WebSocket error:", err);
-            };
+                ws.onerror = (err) => {
+                    console.error("WebSocket error:", err);
+                };
 
-            ws.onclose = () => {
-                // 连接意外关闭（网络断开/超时）时标记结束，避免 UI 卡住
-                if (runWsRef.current === ws) {
+                ws.onclose = (event) => {
+                    // 已被主动关闭（关闭弹窗 / 开始新任务）时不处理
+                    if (runWsRef.current !== ws) return;
                     runWsRef.current = null;
+                    if (finished) return;
+                    // 登录已失效：重连没有意义，与 HTTP 401 一致回到登录页
+                    if (event.code === WS_CLOSE_UNAUTHORIZED) {
+                        setIsDone(true);
+                        if (getToken() === token) logout();
+                        return;
+                    }
+                    // 意外断开（网络抖动 / 代理超时）：任务可能仍在运行，退避重连
+                    if (retries < WS_MAX_RETRIES) {
+                        const delay = Math.min(1000 * 2 ** retries, 8000);
+                        retries += 1;
+                        const timer = setTimeout(() => {
+                            if (runReconnectTimerRef.current !== timer) return;
+                            runReconnectTimerRef.current = null;
+                            connect();
+                        }, delay);
+                        runReconnectTimerRef.current = timer;
+                        return;
+                    }
                     setIsDone(true);
-                }
+                    addToast(language === "zh" ? "实时日志连接已断开，任务可能仍在后台运行，请稍后查看历史记录" : "Live log connection lost. The task may still be running; check history later.", "error");
+                };
             };
+
+            connect();
         } catch (err: any) {
             addToast(formatErrorMessage("task_run_failed", err), "error");
             setRunningTask(null);

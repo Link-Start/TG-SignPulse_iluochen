@@ -5,8 +5,12 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
+import os
+import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +31,9 @@ class ConfigService:
 
     def __init__(self):
         self.workdir = settings.resolve_workdir()
+        # 全局设置在每次任务执行、代理解析、通知发送时都会读取，按文件 mtime/size 缓存解析结果
+        self._global_settings_lock = threading.RLock()
+        self._global_settings_cache: tuple[str, int, int, dict] | None = None
         self.signs_dir = self.workdir / "signs"
         self.monitors_dir = self.workdir / "monitors"
 
@@ -589,12 +596,12 @@ class ConfigService:
             设置字典
         """
         config_file = self._get_global_settings_file()
+        stored = self._read_global_settings_cached(config_file)
 
-        override_data_dir = load_data_dir_override()
         default_settings = {
             "sign_interval": None,  # None 表示使用随机 1-120 秒
             "log_retention_days": 7,
-            "data_dir": str(override_data_dir) if override_data_dir else None,
+            "data_dir": None,
             "global_proxy": None,
             "telegram_bot_notify_enabled": False,
             "telegram_bot_login_notify_enabled": False,
@@ -604,21 +611,36 @@ class ConfigService:
             "telegram_bot_message_thread_id": None,
         }
 
-        if not config_file.exists():
-            return default_settings
+        result = copy.deepcopy(stored) if stored is not None else {}
+        # 合并默认设置
+        for key, value in default_settings.items():
+            if key not in result:
+                result[key] = value
+        if "data_dir" not in (stored or {}):
+            override_data_dir = load_data_dir_override()
+            result["data_dir"] = str(override_data_dir) if override_data_dir else None
+        return result
 
+    def _read_global_settings_cached(self, config_file: Path) -> dict | None:
+        """读取并缓存全局设置文件；文件不存在或损坏时返回 None。返回值只读，调用方需拷贝"""
         try:
-            with open(config_file, "r", encoding="utf-8") as f:
-                settings = json.load(f)
-                if not isinstance(settings, dict):
-                    return default_settings
-                # 合并默认设置
-                for key, value in default_settings.items():
-                    if key not in settings:
-                        settings[key] = value
-                return settings
-        except (json.JSONDecodeError, OSError):
-            return default_settings
+            stat = config_file.stat()
+        except OSError:
+            return None
+        key = (str(config_file), stat.st_mtime_ns, stat.st_size)
+        with self._global_settings_lock:
+            cached = self._global_settings_cache
+            if cached is not None and cached[:3] == key:
+                return cached[3]
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                return None
+            if not isinstance(data, dict):
+                return None
+            self._global_settings_cache = (*key, data)
+            return data
 
     def save_global_settings(self, settings: dict) -> bool:
         """
@@ -648,12 +670,26 @@ class ConfigService:
             clear_data_dir_override()
             merged["data_dir"] = None
 
-        try:
-            with open(config_file, "w", encoding="utf-8") as f:
-                json.dump(merged, f, ensure_ascii=False, indent=2)
-            return True
-        except OSError:
-            return False
+        with self._global_settings_lock:
+            tmp_path = None
+            try:
+                fd, tmp_path = tempfile.mkstemp(
+                    dir=str(config_file.parent), prefix=".global_settings.", suffix=".tmp"
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(merged, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, config_file)
+                tmp_path = None
+                return True
+            except OSError:
+                return False
+            finally:
+                self._global_settings_cache = None
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
 
     # ============ Telegram API 配置 ============
 

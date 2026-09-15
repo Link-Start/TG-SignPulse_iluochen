@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface ToastProps {
     message: string;
@@ -11,15 +11,23 @@ interface ToastProps {
 
 export function Toast({ message, type = "info", duration = 4000, onClose }: ToastProps) {
     const [isExiting, setIsExiting] = useState(false);
+    // onClose 通常是父组件内联函数，放进依赖会让父组件每次渲染都重置计时，
+    // 父组件频繁刷新（如倒计时）时 toast 永远不会自动消失
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
 
     useEffect(() => {
+        let exitTimer: ReturnType<typeof setTimeout> | undefined;
         const timer = setTimeout(() => {
             setIsExiting(true);
-            setTimeout(onClose, 300);
+            exitTimer = setTimeout(() => onCloseRef.current(), 300);
         }, duration);
 
-        return () => clearTimeout(timer);
-    }, [duration, onClose]);
+        return () => {
+            clearTimeout(timer);
+            if (exitTimer) clearTimeout(exitTimer);
+        };
+    }, [duration]);
 
     const getIcon = () => {
         switch (type) {
@@ -117,17 +125,23 @@ export function ToastContainer({ toasts, removeToast }: ToastContainerProps) {
 }
 
 // Hook for managing toasts
+let toastSeq = 0;
+
 export function useToast() {
     const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: "success" | "error" | "info" }>>([]);
 
-    const addToast = (message: string, type: "success" | "error" | "info" = "info") => {
-        const id = Date.now().toString();
+    // 保持引用稳定：页面里大量 useCallback / useEffect 依赖 addToast，
+    // 每次渲染换新函数会让依赖它的轮询 effect 反复重启
+    const addToast = useCallback((message: string, type: "success" | "error" | "info" = "info") => {
+        // 同一毫秒内连续弹出时 Date.now() 会重复，导致 key 冲突、关闭一个误删多个
+        toastSeq += 1;
+        const id = `${Date.now()}-${toastSeq}`;
         setToasts((prev) => [...prev, { id, message, type }]);
-    };
+    }, []);
 
-    const removeToast = (id: string) => {
+    const removeToast = useCallback((id: string) => {
         setToasts((prev) => prev.filter((toast) => toast.id !== id));
-    };
+    }, []);
 
     return { toasts, addToast, removeToast };
 }
