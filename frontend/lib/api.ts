@@ -13,9 +13,35 @@ const toRecord = (headers?: HeadersInit): Record<string, string> => {
   return headers as Record<string, string>;
 };
 
+// 读取类请求应很快返回；登录、测试发送、导入等写操作可能涉及 Telegram 网络交互，给更长时间
+const READ_TIMEOUT_MS = 30_000;
+const WRITE_TIMEOUT_MS = 180_000;
+
+type RequestOptions = RequestInit & { timeoutMs?: number };
+
+async function fetchWithTimeout(url: string, options: RequestOptions = {}): Promise<Response> {
+  const { timeoutMs, ...init } = options;
+  const method = (init.method || "GET").toUpperCase();
+  const limit = timeoutMs ?? (method === "GET" ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), limit);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      const timeoutErr: any = new Error("请求超时，请检查网络或稍后重试");
+      timeoutErr.code = "REQUEST_TIMEOUT";
+      throw timeoutErr;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function request<T>(
   path: string,
-  options: RequestInit = {},
+  options: RequestOptions = {},
   token?: string | null
 ): Promise<T> {
   const mergedHeaders: Record<string, string> = {
@@ -25,7 +51,7 @@ async function request<T>(
   if (token) {
     mergedHeaders["Authorization"] = `Bearer ${token}`;
   }
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchWithTimeout(`${API_BASE}${path}`, {
     ...options,
     headers: mergedHeaders,
     cache: "no-store", // 禁用缓存，确保获取最新数据
@@ -276,7 +302,7 @@ export const exportSignTask = async (token: string, taskName: string, accountNam
   const params = new URLSearchParams();
   if (accountName) params.append("account_name", accountName);
   const url = `${API_BASE}/config/export/sign/${taskName}${params.toString() ? `?${params.toString()}` : ""}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
@@ -304,7 +330,7 @@ export const importSignTask = (
   }, token);
 
 export const exportAllConfigs = async (token: string) => {
-  const res = await fetch(`${API_BASE}/config/export/all`, {
+  const res = await fetchWithTimeout(`${API_BASE}/config/export/all`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
@@ -508,7 +534,7 @@ export const clearAccountLogs = (token: string, accountName: string) =>
   );
 
 export const exportAccountLogs = async (token: string, accountName: string) => {
-  const res = await fetch(`${API_BASE}/accounts/${accountName}/logs/export`, {
+  const res = await fetchWithTimeout(`${API_BASE}/accounts/${accountName}/logs/export`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -647,7 +673,7 @@ export const setSignTaskEnabled = (
   );
 
 export const getAccountChats = (token: string, accountName: string, forceRefresh?: boolean) =>
-  request<ChatInfo[]>(`/sign-tasks/chats/${accountName}${forceRefresh ? '?force_refresh=true' : ''}`, {}, token);
+  request<ChatInfo[]>(`/sign-tasks/chats/${accountName}${forceRefresh ? '?force_refresh=true' : ''}`, { timeoutMs: WRITE_TIMEOUT_MS }, token);
 
 export const testSendMessage = (
   token: string,

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import itertools
 import json
 import logging
 import os
@@ -40,6 +41,31 @@ from tg_signer.core import UserSigner, get_client
 
 settings = get_settings()
 logger = logging.getLogger("backend.sign_tasks")
+
+
+_run_id_counter = itertools.count(1)
+
+
+class LogBuffer(deque):
+    """定长日志缓冲；total 记录累计写入条数，run_id 区分同一任务的不同次运行"""
+
+    def __init__(self, maxlen: int = 1000):
+        super().__init__(maxlen=maxlen)
+        self.total = 0
+        self.run_id = next(_run_id_counter)
+
+    def append(self, item) -> None:
+        super().append(item)
+        self.total += 1
+
+
+def slice_logs_since(buf, total: int, cursor: int) -> list[str]:
+    """按累计序号取 cursor 之后的日志；缓冲已滚动丢弃的部分直接跳过"""
+    if cursor >= total:
+        return []
+    oldest = total - len(buf)
+    start = max(cursor, oldest) - oldest
+    return list(buf)[start:]
 
 
 class TaskLogHandler(logging.Handler):
@@ -128,7 +154,8 @@ class SignTaskService:
         self.signs_dir.mkdir(parents=True, exist_ok=True)
         self.run_history_dir.mkdir(parents=True, exist_ok=True)
         logger.debug("初始化 SignTaskService signs_dir=%s", self.signs_dir)
-        self._active_logs: dict[tuple[str, str], deque] = {}  # (account, task) -> logs
+        self._active_logs: dict[tuple[str, str], LogBuffer] = {}  # (account, task) -> logs
+        self._last_run_results: dict[tuple[str, str], dict[str, Any]] = {}
         self._active_tasks: dict[tuple[str, str], bool] = {}  # (account, task) -> running
         self._cleanup_tasks: dict[tuple[str, str], asyncio.Task] = {}
         self._tasks_cache = None  # 内存缓存
@@ -1619,6 +1646,26 @@ class SignTaskService:
             return logs
         return monitor_logs
 
+    def get_run_logs_since(
+        self, task_name: str, account_name: str, run_id: int | None, cursor: int
+    ) -> dict[str, Any]:
+        """增量读取某次运行的日志；run_id 变化说明任务已重新启动，从头读取"""
+        key = self._task_key(account_name, task_name)
+        buf = self._active_logs.get(key)
+        if buf is None:
+            return {"exists": False, "run_id": None, "cursor": 0, "lines": []}
+        if buf.run_id != run_id:
+            cursor = 0
+        return {
+            "exists": True,
+            "run_id": buf.run_id,
+            "cursor": buf.total,
+            "lines": slice_logs_since(buf, buf.total, cursor),
+        }
+
+    def get_last_run_result(self, task_name: str, account_name: str) -> dict[str, Any] | None:
+        return self._last_run_results.get(self._task_key(account_name, task_name))
+
     def is_task_running(self, task_name: str, account_name: str | None = None) -> bool:
         """检查任务是否正在运行"""
         if account_name:
@@ -1650,7 +1697,8 @@ class SignTaskService:
         # 标记运行中 + 挂载日志处理器，放在同一个 try 块内，确保 finally 能清理
         try:
             self._active_tasks[task_key] = True
-            self._active_logs[task_key] = deque(maxlen=1000)
+            self._active_logs[task_key] = LogBuffer()
+            self._last_run_results.pop(task_key, None)
             log_handler = TaskLogHandler(self._active_logs[task_key])
             log_handler.setLevel(logging.INFO)
             log_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
@@ -1865,7 +1913,7 @@ class SignTaskService:
                         success = False
                         error_msg = f"机器人回复疑似失败: {last_reply}"
                         final_logs.append(error_msg)
-                        self._active_logs.setdefault(task_key, deque(maxlen=1000)).append(error_msg)
+                        self._active_logs.setdefault(task_key, LogBuffer()).append(error_msg)
                         output_str = "\n".join(final_logs)
 
             msg = error_msg if not success else last_reply
@@ -1914,6 +1962,7 @@ class SignTaskService:
                 except Exception:
                     pass
 
+        self._last_run_results[task_key] = {"success": success, "error": error_msg}
         return {
             "success": success,
             "output": output_str,

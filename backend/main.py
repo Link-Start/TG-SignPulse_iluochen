@@ -143,40 +143,65 @@ def ready_check(response: Response) -> dict[str, str]:
 
 # 静态前端托管（Mode A: 单容器，FastAPI 提供静态文件）
 # 仅在 /web/_next 目录存在时挂载（Docker 环境），本地开发时跳过
-if Path("/web/_next").exists():
+WEB_DIR = Path("/web").resolve()
+
+
+class _ImmutableStaticFiles(StaticFiles):
+    """Next.js 构建产物文件名带内容哈希，可安全地长期缓存"""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
+if (WEB_DIR / "_next").exists():
     app.mount(
         "/_next",
-        StaticFiles(directory="/web/_next"),
+        _ImmutableStaticFiles(directory=str(WEB_DIR / "_next")),
         name="nextjs_static",
     )
+
+
+def _safe_web_file(relative: str) -> Path | None:
+    """解析 /web 下的文件，拒绝越出 /web 目录的路径"""
+    try:
+        candidate = (WEB_DIR / relative).resolve()
+    except (OSError, ValueError):
+        return None
+    if not candidate.is_relative_to(WEB_DIR) or not candidate.is_file():
+        return None
+    return candidate
+
+
+def _html_response(path: Path) -> FileResponse:
+    # HTML 入口不缓存，确保发版后浏览器能拿到新的资源引用
+    return FileResponse(path, headers={"Cache-Control": "no-cache"})
 
 
 # Catch-all 路由：处理所有前端路由，返回 index.html
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
-    """
-    SPA fallback: 对于所有非 API 路由，返回 index.html
-    这样刷新页面时不会 404
-    """
-    # 检查是否是静态文件请求
-    web_dir = Path("/web")
-    file_path = web_dir / full_path
+    """SPA fallback: 对于所有非 API 路由，返回对应静态文件或 index.html"""
+    if full_path.startswith("api/"):
+        return Response(status_code=status.HTTP_404_NOT_FOUND)
 
-    # 如果文件存在且不是目录，直接返回文件
-    if file_path.exists() and file_path.is_file():
+    file_path = _safe_web_file(full_path) if full_path else None
+    if file_path is not None:
+        if file_path.suffix == ".html":
+            return _html_response(file_path)
         return FileResponse(file_path)
 
-    # 尝试添加 .html 后缀（Next.js 导出通常会生成 .html 文件）
-    html_path = web_dir / f"{full_path}.html"
-    if html_path.exists() and html_path.is_file():
-        return FileResponse(html_path)
+    # Next.js 静态导出会生成 xxx.html
+    html_path = _safe_web_file(f"{full_path}.html") if full_path else None
+    if html_path is not None:
+        return _html_response(html_path)
 
-    # 否则返回 index.html（SPA 路由）
-    index_path = web_dir / "index.html"
-    if index_path.exists():
-        return FileResponse(index_path)
+    index_path = _safe_web_file("index.html")
+    if index_path is not None:
+        return _html_response(index_path)
 
-    # 如果 index.html 也不存在，返回 404
     return {"detail": "Frontend not built"}
 
 

@@ -20,14 +20,25 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
-from sqlalchemy.orm import Session
 
 from backend.core.auth import get_current_user, verify_token
-from backend.core.database import get_db
+from backend.core.database import get_session_local
 from backend.services.sign_tasks import get_sign_task_service
 
 router = APIRouter()
 logger = logging.getLogger("backend.api.sign_tasks")
+
+# 持有后台运行任务的强引用，防止被 GC 提前回收
+_background_runs: set[asyncio.Task] = set()
+_WS_WAIT_START_SECONDS = 5.0
+_WS_POLL_INTERVAL = 0.5
+_WS_PING_INTERVAL = 10.0
+
+
+def _on_background_run_done(task: asyncio.Task) -> None:
+    _background_runs.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("后台运行签到任务异常", exc_info=task.exception())
 
 
 async def _restart_keyword_monitors() -> None:
@@ -372,14 +383,26 @@ async def run_sign_task(
     account_name: str,
     current_user=Depends(get_current_user),
 ):
-    """手动运行签到任务"""
-    # 检查任务是否存在
-    task = get_sign_task_service().get_task(task_name, account_name=account_name)
+    """手动运行签到任务：后台启动后立即返回，执行过程与结果通过 WebSocket 获取"""
+    service = get_sign_task_service()
+    task = service.get_task(task_name, account_name=account_name)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务 {task_name} 不存在")
 
-    result = await get_sign_task_service().run_task_with_logs(account_name, task_name)
-    return result
+    if service.is_task_running(task_name, account_name=account_name):
+        return {"success": False, "output": "", "error": "任务已经在运行中"}
+
+    bg = asyncio.create_task(service.run_task_with_logs(account_name, task_name))
+    _background_runs.add(bg)
+    bg.add_done_callback(_on_background_run_done)
+
+    # 让出事件循环直到任务完成"运行中"占位，保证前端随后建立的 WebSocket 能看到任务
+    for _ in range(20):
+        if bg.done() or service.is_task_running(task_name, account_name=account_name):
+            break
+        await asyncio.sleep(0)
+
+    return {"success": True, "output": "", "error": ""}
 
 
 @router.get("/{task_name}/logs", response_model=list[str])
@@ -462,66 +485,85 @@ def search_account_chats(
 async def sign_task_logs_ws(
     websocket: WebSocket,
     task_name: str,
-    account_name: str | None = Query(None),
+    account_name: str = Query(...),
     token: str = Query(...),
-    db: Session = Depends(get_db),
 ):
-    """
-    WebSocket 实时推送签到任务日志
-    """
-    # 验证 Token
+    """WebSocket 实时推送签到任务日志（按累计序号增量推送，不受缓冲滚动影响）"""
+    # 鉴权用短生命周期会话，避免长连接期间一直占用数据库连接
     try:
-        user = verify_token(token, db)
-        if not user:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
+        with get_session_local()() as db:
+            user = verify_token(token, db)
     except Exception:
+        user = None
+    if not user:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
     await websocket.accept()
 
-    last_idx = 0
-    ping_ticks = 0
+    service = get_sign_task_service()
+    try:
+        from backend.services.keyword_monitor import get_keyword_monitor_service
+
+        monitor_service = get_keyword_monitor_service()
+    except Exception:
+        monitor_service = None
+
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    last_send = started_at
+    run_id: int | None = None
+    cursor = 0
+    monitor_cursor = 0
+    monitor_header_sent = False
+
     try:
         while True:
-            # 获取当前所有日志
-            active_logs = get_sign_task_service().get_active_logs(
-                task_name, account_name=account_name
-            )
+            snapshot = service.get_run_logs_since(task_name, account_name, run_id, cursor)
+            run_id, cursor = snapshot["run_id"], snapshot["cursor"]
+            lines: list[str] = list(snapshot["lines"])
 
-            # 如果有新内容，则推送
-            if len(active_logs) > last_idx:
-                new_logs = active_logs[last_idx:]
+            if monitor_service is not None:
+                try:
+                    monitor_lines, monitor_cursor = monitor_service.get_task_logs_since(
+                        task_name, account_name, monitor_cursor
+                    )
+                except Exception:
+                    monitor_lines = []
+                if monitor_lines:
+                    if not monitor_header_sent and (cursor > 0 or lines):
+                        lines.append("---- 关键词后台监听日志 ----")
+                        monitor_header_sent = True
+                    lines.extend(monitor_lines)
+
+            running = service.is_task_running(task_name, account_name=account_name)
+            now = loop.time()
+
+            if lines:
+                await websocket.send_json(
+                    {"type": "logs", "data": lines, "is_running": running}
+                )
+                last_send = now
+
+            # 任务结束且日志已推完；尚无运行记录时给任务留出启动时间
+            waiting_start = not snapshot["exists"] and now - started_at < _WS_WAIT_START_SECONDS
+            if not running and not waiting_start:
+                result = service.get_last_run_result(task_name, account_name) or {}
                 await websocket.send_json(
                     {
-                        "type": "logs",
-                        "data": new_logs,
-                        "is_running": get_sign_task_service().is_task_running(
-                            task_name, account_name=account_name
-                        ),
+                        "type": "done",
+                        "is_running": False,
+                        "success": result.get("success"),
+                        "error": result.get("error", ""),
                     }
                 )
-                last_idx = len(active_logs)
-                ping_ticks = 0
-
-            # 如果任务已结束且日志已推完
-            if (
-                not get_sign_task_service().is_task_running(
-                    task_name, account_name=account_name
-                )
-                and last_idx >= len(active_logs)
-            ):
-                await websocket.send_json({"type": "done", "is_running": False})
                 break
 
-            # 每 10s 发送 ping，防止反向代理空闲超时断开
-            ping_ticks += 1
-            if ping_ticks >= 20:
-                ping_ticks = 0
+            if now - last_send >= _WS_PING_INTERVAL:
                 await websocket.send_json({"type": "ping"})
+                last_send = now
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(_WS_POLL_INTERVAL)
     except WebSocketDisconnect:
         pass
     except Exception as e:

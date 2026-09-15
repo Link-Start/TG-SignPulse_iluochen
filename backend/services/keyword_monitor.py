@@ -328,6 +328,7 @@ class KeywordMonitorService:
         self._active_key = ""
         self._lock = asyncio.Lock()
         self._task_logs: dict[tuple[str, str], list[str]] = {}
+        self._task_log_totals: dict[tuple[str, str], int] = {}
         self._task_status: dict[tuple[str, str], dict[str, Any]] = {}
         self._watchdog_task: asyncio.Task | None = None
 
@@ -346,6 +347,7 @@ class KeywordMonitorService:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logs = self._task_logs.setdefault(key, [])
         logs.append(f"{timestamp} - {line}")
+        self._task_log_totals[key] = self._task_log_totals.get(key, 0) + 1
         if len(logs) > 1000:
             del logs[:-1000]
 
@@ -377,6 +379,16 @@ class KeywordMonitorService:
             if item_task == task_name:
                 return list(logs)
         return []
+
+    def get_task_logs_since(
+        self, task_name: str, account_name: str, cursor: int
+    ) -> tuple[list[str], int]:
+        from backend.services.sign_tasks import slice_logs_since
+
+        key = self._task_key(account_name, task_name)
+        logs = self._task_logs.get(key) or []
+        total = self._task_log_totals.get(key, 0)
+        return slice_logs_since(logs, total, cursor), total
 
     def get_task_history_entry(
         self,

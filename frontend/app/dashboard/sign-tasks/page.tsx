@@ -139,6 +139,9 @@ import { ToastContainer, useToast } from "../../../components/ui/toast";
 import { ThemeLanguageToggle } from "../../../components/ThemeLanguageToggle";
 import { useLanguage } from "../../../context/LanguageContext";
 
+// 与后端日志缓冲上限一致，避免长任务日志无限增长导致弹窗卡顿
+const MAX_RUN_LOG_LINES = 1000;
+
 export default function SignTasksPage() {
     const router = useRouter();
     const { t, language } = useLanguage();
@@ -159,6 +162,7 @@ export default function SignTasksPage() {
     const [logsLoading, setLogsLoading] = useState(false);
     const [togglingTask, setTogglingTask] = useState<string | null>(null);
 
+    const runWsRef = useRef<WebSocket | null>(null);
     const addToastRef = useRef(addToast);
     const tRef = useRef(t);
 
@@ -222,32 +226,69 @@ export default function SignTasksPage() {
         }
     };
 
+    const closeRunSocket = useCallback(() => {
+        const ws = runWsRef.current;
+        runWsRef.current = null;
+        if (ws && ws.readyState !== WebSocket.CLOSED) {
+            ws.close();
+        }
+    }, []);
+
+    useEffect(() => closeRunSocket, [closeRunSocket]);
+
+    const closeRunDialog = () => {
+        closeRunSocket();
+        setRunningTask(null);
+    };
+
     const handleRun = async (task: SignTask) => {
         if (!token) return;
         const taskName = task.name;
         const accountName = task.account_name;
 
+        closeRunSocket();
         setRunningTask(taskName);
         setRunLogs([]);
         setIsDone(false);
 
         try {
-            // 建立 WebSocket 连接
+            // 先启动任务（接口在任务占位后立即返回），再连 WebSocket，避免连上时任务还未开始被误判为已结束
+            const result = await runSignTask(token, taskName, accountName);
+            if (!result.success) {
+                if (result.error && result.error.includes("运行中")) {
+                    addToast(language === "zh" ? "该任务正在运行中，正在为您展示实时进度..." : "Task is currently running. Showing real-time logs.", "info");
+                } else {
+                    addToast(result.error || t("task_run_failed"), "error");
+                    setIsDone(true);
+                    return;
+                }
+            }
+
             // 开发环境：前端在 :3000，后端在 :8080；生产/Docker 同端口
             const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
             const host = window.location.port === "3000"
                 ? window.location.hostname + ":8080"
                 : window.location.host;
             const wsParams = new URLSearchParams({ token, account_name: accountName });
-            const wsUrl = `${protocol}//${host}/api/sign-tasks/ws/${taskName}?${wsParams.toString()}`;
+            const wsUrl = `${protocol}//${host}/api/sign-tasks/ws/${encodeURIComponent(taskName)}?${wsParams.toString()}`;
             const ws = new WebSocket(wsUrl);
+            runWsRef.current = ws;
 
             ws.onmessage = (event) => {
+                if (runWsRef.current !== ws) return;
                 const data = JSON.parse(event.data);
                 if (data.type === "logs") {
-                    setRunLogs(prev => [...prev, ...data.data]);
+                    setRunLogs(prev => {
+                        const next = prev.concat(data.data);
+                        return next.length > MAX_RUN_LOG_LINES ? next.slice(-MAX_RUN_LOG_LINES) : next;
+                    });
                 } else if (data.type === "done") {
                     setIsDone(true);
+                    if (data.success === true) {
+                        addToast(t("task_run_success").replace("{name}", taskName), "success");
+                    } else if (data.success === false) {
+                        addToast(data.error || t("task_run_failed"), "error");
+                    }
                     ws.close();
                 }
                 // type === "ping" 心跳包，忽略即可
@@ -258,22 +299,12 @@ export default function SignTasksPage() {
             };
 
             ws.onclose = () => {
-                // 连接意外关闭（网络断开/超时）时标记任务结束，避免 UI 卡住
-                setIsDone(true);
-            };
-
-            const result = await runSignTask(token, taskName, accountName);
-
-            if (!result.success) {
-                if (result.error && result.error.includes("运行中")) {
-                    addToast(language === "zh" ? "该任务正在运行中，正在为您展示实时进度..." : "Task is currently running. Showing real-time logs.", "info");
-                } else {
-                    addToast(result.error || t("task_run_failed"), "error");
+                // 连接意外关闭（网络断开/超时）时标记结束，避免 UI 卡住
+                if (runWsRef.current === ws) {
+                    runWsRef.current = null;
                     setIsDone(true);
                 }
-            } else {
-                addToast(t("task_run_success").replace("{name}", taskName), "success");
-            }
+            };
         } catch (err: any) {
             addToast(formatErrorMessage("task_run_failed", err), "error");
             setRunningTask(null);
@@ -718,7 +749,7 @@ export default function SignTasksPage() {
                             </div>
                             {isDone && (
                                 <button
-                                    onClick={() => setRunningTask(null)}
+                                    onClick={closeRunDialog}
                                     className="action-btn !w-8 !h-8 hover:bg-white/10"
                                 >
                                     <X weight="bold" />
@@ -756,7 +787,7 @@ export default function SignTasksPage() {
                         </div>
                         <div className="p-4 border-t border-white/5 bg-white/2 flex justify-end">
                             <button
-                                onClick={() => setRunningTask(null)}
+                                onClick={closeRunDialog}
                                 disabled={!isDone}
                                 className={`px-6 py-2 rounded-xl font-bold text-xs transition-all ${isDone ? 'btn-gradient shadow-lg' : 'bg-white/5 text-main/20 cursor-not-allowed'}`}
                             >
