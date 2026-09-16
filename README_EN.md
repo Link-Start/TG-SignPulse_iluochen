@@ -49,7 +49,7 @@ TG-SignPulse is a Telegram automation panel. It helps you manage multiple accoun
 
 Default credentials:
 - Username: `admin`
-- Password: `admin123`
+- Password: `admin123` (on first sign-in you are sent to Settings and asked to change it; `admin123` cannot be reused)
 
 ### One-command Deploy
 
@@ -103,7 +103,8 @@ touch /data/.probe && rm /data/.probe
 
 ## Common Environment Variables
 
-- `APP_SECRET_KEY`: panel secret key (strongly recommended)
+- `APP_SECRET_KEY`: panel sign-in key; use a random string of 16+ characters. If unset, a random key is generated and saved to `.secret_key` in the data directory (deleting it signs everyone out)
+- `APP_CORS_ORIGINS`: comma-separated origins allowed for cross-origin requests; cross-origin access is off by default (the panel and API share one origin)
 - `ADMIN_PASSWORD`: initial default password for the admin user (strongly recommended, otherwise defaults to insecure `admin123`)
 - `APP_HOST`: API listening interface (defaults to `127.0.0.1` for security; use `0.0.0.0` if exposing container globally)
 - `APP_DATA_DIR`: custom data directory (higher priority than panel setting)
@@ -160,6 +161,27 @@ frontend/     Next.js management panel
 ```
 
 ## Changelog
+
+### v0.9.0 (2026-09-16)
+
+Rolls up every fix since v0.8.8, plus:
+
+- **Sturdier sign-in**: an abandoned phone login releases the account lock after `PHONE_LOGIN_TTL_SECONDS` (default 600) so sign-in tasks are no longer blocked; duplicate code submissions are rejected.
+- **Expired sessions sign out**: live-log WebSockets close with code 4401 when the token is invalid, and the panel returns to the sign-in page.
+- **Keyword monitor watchdog** no longer cancels itself when restarting monitors.
+- **Safer settings storage**: global settings and account data are written atomically and cached by modification time.
+- **Schedule edits apply immediately**: changing a time window clears runs already queued in the old window.
+- **Dashboard refactor** into separate components with fewer re-renders and steadier QR-login polling.
+
+Security fixes (read before upgrading):
+
+- **Removed the TOTP reset endpoints** `/api/auth/reset-totp` (disabled 2FA with just the password) and `/api/user/totp/reset`. If you lose your authenticator, run on the server:
+  `docker exec tg-signpulse sh -c 'gosu "$(stat -c %u:%g /data)" python -m backend.cli.reset_totp admin'`
+- **No more built-in fixed secret**: without `APP_SECRET_KEY` a random key is generated. Deployments that never set it will need to sign in again once.
+- **Cross-origin access is off by default**; set `APP_CORS_ORIGINS` if you need it.
+- **Default password reminder** when signing in with `admin123`.
+- Generic tasks now record an end time on failure, and their live-log WebSocket also closes with 4401 on an invalid token.
+- The bcrypt constraint in `pyproject.toml` is now `>=3.2,<4.1`, matching 4.0.1 in the Docker image.
 
 ### 2026-05-21
 
