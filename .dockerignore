@@ -95,3 +95,6 @@ test_*.py
 tools/
 .vscode/
 .DS_Store
+
+# Impeccable 设计过程文件
+.impeccable/
