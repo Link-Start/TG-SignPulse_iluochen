@@ -566,10 +566,9 @@ def _get_account_client_params(account_name: str):
     session_string = None
     use_in_memory = False
     if session_mode == "string":
-        session_string = (
-            get_account_session_string(account_name)
-            or load_session_string_file(session_dir, account_name)
-        )
+        session_string = get_account_session_string(
+            account_name
+        ) or load_session_string_file(session_dir, account_name)
         use_in_memory = bool(session_string)
 
     tg_config = get_config_service().get_telegram_config()
@@ -658,14 +657,16 @@ async def test_run_chat(
         raise HTTPException(status_code=404, detail="账号不存在")
 
     try:
-        chat = SignChatV3.parse_obj({
-            "chat_id": request.chat_id,
-            "name": request.name,
-            "actions": request.actions,
-            "action_interval": request.action_interval,
-            "message_thread_id": request.message_thread_id,
-            "delete_after": request.delete_after,
-        })
+        chat = SignChatV3.parse_obj(
+            {
+                "chat_id": request.chat_id,
+                "name": request.name,
+                "actions": request.actions,
+                "action_interval": request.action_interval,
+                "message_thread_id": request.message_thread_id,
+                "delete_after": request.delete_after,
+            }
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"动作配置解析失败: {e}")
 
@@ -675,7 +676,9 @@ async def test_run_chat(
     if use_in_memory and not session_string:
         raise HTTPException(status_code=400, detail="账号 session 不存在或已失效")
     if not api_id or not api_hash:
-        raise HTTPException(status_code=400, detail="未配置 Telegram API ID 或 API Hash")
+        raise HTTPException(
+            status_code=400, detail="未配置 Telegram API ID 或 API Hash"
+        )
 
     logs: list[str] = []
     tg_logger = logging.getLogger("tg-signer")
@@ -686,6 +689,7 @@ async def test_run_chat(
 
     try:
         from backend.core.config import get_settings as _get_settings
+
         _settings = _get_settings()
 
         signer = BackendUserSigner(
@@ -956,7 +960,5 @@ def export_account_logs(
     return Response(
         content=content,
         media_type="text/plain; charset=utf-8",
-        headers={
-            "Content-Disposition": 'attachment; filename="account_logs.txt"'
-        },
+        headers={"Content-Disposition": 'attachment; filename="account_logs.txt"'},
     )

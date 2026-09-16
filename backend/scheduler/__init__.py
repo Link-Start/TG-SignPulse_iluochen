@@ -64,7 +64,7 @@ def create_cron_trigger(cron_str: str) -> CronTrigger:
             hour=parts[2],
             day=parts[3],
             month=parts[4],
-            day_of_week=parts[5]
+            day_of_week=parts[5],
         )
     return CronTrigger.from_crontab(cron_str)
 
@@ -100,7 +100,7 @@ def _schedule_task_retry(account_name: str, task_name: str) -> None:
             _job_run_sign_task,
             trigger=DateTrigger(run_date=run_at),
             id=retry_id,
-            args=[account_name, task_name, True],   # is_retry=True
+            args=[account_name, task_name, True],  # is_retry=True
             replace_existing=True,
         )
         logger.info(
@@ -125,14 +125,21 @@ async def _job_run_sign_task(
         task = sign_task_service.get_task(task_name, account_name=account_name)
         if not task or not task.get("enabled", True):
             # 任务已删除或停用时遗留的一次性 job，直接跳过，也不再注册重试
-            logger.info("%s签到任务 %s (账号: %s) 不存在或已停用，跳过", prefix, task_name, account_name)
+            logger.info(
+                "%s签到任务 %s (账号: %s) 不存在或已停用，跳过",
+                prefix,
+                task_name,
+                account_name,
+            )
             return
         logger.info("%s开始执行签到任务 %s (账号: %s)", prefix, task_name, account_name)
         result = await sign_task_service.run_task_with_logs(account_name, task_name)
         if result.get("success"):
             logger.info("%s任务 %s 执行成功", prefix, task_name)
         else:
-            logger.error("%s任务 %s 执行失败: %s", prefix, task_name, result.get("error"))
+            logger.error(
+                "%s任务 %s 执行失败: %s", prefix, task_name, result.get("error")
+            )
             # 账号失效不重试；已经是重试则不再重试
             if not is_retry and not result.get("account_invalid"):
                 _schedule_task_retry(account_name, task_name)
@@ -167,8 +174,12 @@ def _schedule_range_random_run(account_name: str, task_name: str, st: dict) -> N
         start_t = datetime.strptime(range_start_str, fmt).time()
         end_t = datetime.strptime(range_end_str, fmt).time()
 
-        start_dt = now.replace(hour=start_t.hour, minute=start_t.minute, second=0, microsecond=0)
-        end_dt = now.replace(hour=end_t.hour, minute=end_t.minute, second=0, microsecond=0)
+        start_dt = now.replace(
+            hour=start_t.hour, minute=start_t.minute, second=0, microsecond=0
+        )
+        end_dt = now.replace(
+            hour=end_t.hour, minute=end_t.minute, second=0, microsecond=0
+        )
         if end_dt <= start_dt:
             end_dt += timedelta(days=1)
 
@@ -192,7 +203,10 @@ def _schedule_range_random_run(account_name: str, task_name: str, st: dict) -> N
         )
         logger.info(
             "任务 %s range 模式，将在 %ds (%.1f 分钟) 后执行 (约 %s)",
-            task_name, int(delay), delay / 60, run_at.strftime("%H:%M:%S"),
+            task_name,
+            int(delay),
+            delay / 60,
+            run_at.strftime("%H:%M:%S"),
         )
     except Exception as e:
         logger.warning("range 随机调度失败 %s: %s", task_name, e)
@@ -231,10 +245,14 @@ async def _job_health_check_accounts() -> None:
                     "定期巡检",
                     result.get("message") or "Session 已失效，请重新登录",
                 )
-                logger.warning("账号 %s 巡检发现 session 失效，已发送通知", account_name)
+                logger.warning(
+                    "账号 %s 巡检发现 session 失效，已发送通知", account_name
+                )
             else:
                 logger.info(
-                    "账号 %s 巡检状态: %s (非失效，忽略)", account_name, result.get("status")
+                    "账号 %s 巡检状态: %s (非失效，忽略)",
+                    account_name,
+                    result.get("status"),
                 )
         except Exception:
             logger.exception("巡检账号 %s 时发生异常", account_name)
@@ -280,8 +298,12 @@ def schedule_range_catchup(account_name: str, task_name: str, st: dict) -> None:
         start_t = datetime.strptime(range_start_str, fmt).time()
         end_t = datetime.strptime(range_end_str, fmt).time()
 
-        start_dt = now.replace(hour=start_t.hour, minute=start_t.minute, second=0, microsecond=0)
-        end_dt = now.replace(hour=end_t.hour, minute=end_t.minute, second=0, microsecond=0)
+        start_dt = now.replace(
+            hour=start_t.hour, minute=start_t.minute, second=0, microsecond=0
+        )
+        end_dt = now.replace(
+            hour=end_t.hour, minute=end_t.minute, second=0, microsecond=0
+        )
         if end_dt <= start_dt:
             end_dt += timedelta(days=1)
 
@@ -305,7 +327,9 @@ def schedule_range_catchup(account_name: str, task_name: str, st: dict) -> None:
 
         # 今日已排好随机执行或补执行时不重复安排，避免同一天跑两次、或每次同步都重新随机时间
         base_id = _sign_job_id(account_name, task_name)
-        if _has_pending_job(f"{base_id}-range-run") or _has_pending_job(f"{base_id}-catchup"):
+        if _has_pending_job(f"{base_id}-range-run") or _has_pending_job(
+            f"{base_id}-catchup"
+        ):
             return
 
         delay = random.uniform(0, remaining)
@@ -321,7 +345,10 @@ def schedule_range_catchup(account_name: str, task_name: str, st: dict) -> None:
         )
         logger.info(
             "任务 %s 处于时间窗口 (%s-%s)，将在 %d 秒后执行",
-            task_name, range_start_str, range_end_str, int(delay),
+            task_name,
+            range_start_str,
+            range_end_str,
+            int(delay),
         )
     except Exception as e:
         logger.warning("计划窗口补执行任务 %s 失败: %s", task_name, e)
@@ -374,7 +401,9 @@ async def sync_jobs() -> None:
             account_name = str(st.get("account_name") or "").strip()
             task_name = str(st.get("name") or "").strip()
             if not account_name or not task_name:
-                logger.warning("Skip scheduling sign task with missing account/name: %s", st)
+                logger.warning(
+                    "Skip scheduling sign task with missing account/name: %s", st
+                )
                 continue
 
             job_id = _sign_job_id(account_name, task_name)
@@ -390,16 +419,24 @@ async def sync_jobs() -> None:
 
             try:
                 is_range = st.get("execution_mode") == "range" and st.get("range_start")
-                trigger = create_cron_trigger(st["range_start"] if is_range else st["sign_at"])
+                trigger = create_cron_trigger(
+                    st["range_start"] if is_range else st["sign_at"]
+                )
 
                 # range 模式：CRON 触发时只负责安排随机 DateTrigger，不直接执行
-                cron_callback = _schedule_range_random_run if is_range else _job_run_sign_task
+                cron_callback = (
+                    _schedule_range_random_run if is_range else _job_run_sign_task
+                )
                 if is_range:
                     # 传轻量副本，防止 job 长期持有可变的大 dict 引用
-                    cron_args = [account_name, task_name, {
-                        "range_start": st.get("range_start"),
-                        "range_end": st.get("range_end"),
-                    }]
+                    cron_args = [
+                        account_name,
+                        task_name,
+                        {
+                            "range_start": st.get("range_start"),
+                            "range_end": st.get("range_end"),
+                        },
+                    ]
                 else:
                     cron_args = [account_name, task_name]
 
@@ -492,10 +529,14 @@ def add_or_update_sign_task_job(
         is_range = task_config and task_config.get("execution_mode") == "range"
         if is_range:
             callback = _schedule_range_random_run
-            args = [account_name, task_name, {
-                "range_start": task_config.get("range_start"),
-                "range_end": task_config.get("range_end"),
-            }]
+            args = [
+                account_name,
+                task_name,
+                {
+                    "range_start": task_config.get("range_start"),
+                    "range_end": task_config.get("range_end"),
+                },
+            ]
         else:
             callback = _job_run_sign_task
             args = [account_name, task_name]

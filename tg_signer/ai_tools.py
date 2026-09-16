@@ -49,7 +49,9 @@ class OpenAIConfigManager:
                 return c
         return None
 
-    def save_config(self, api_key: str, base_url: str | None = None, model: str | None = None):
+    def save_config(
+        self, api_key: str, base_url: str | None = None, model: str | None = None
+    ):
         config_file = self.get_config_file()
         config = OpenAIConfig(api_key=api_key, base_url=base_url, model=model)
         with open(config_file, "w", encoding="utf-8") as fp:

@@ -102,7 +102,13 @@ def _read_positive_int_env(name: str, default: int, minimum: int = 1) -> int:
 
 
 async def _patched_invoke(self, query, *args, **kwargs):
-    if isinstance(query, (raw.functions.updates.GetChannelDifference, raw.functions.updates.GetDifference)):
+    if isinstance(
+        query,
+        (
+            raw.functions.updates.GetChannelDifference,
+            raw.functions.updates.GetDifference,
+        ),
+    ):
         # Disable Pyrogram's internal sleep and retry mechanisms to prevent blocking the semaphore indefinitely
         kwargs.setdefault("sleep_threshold", 0)
         kwargs["retries"] = 0
@@ -116,26 +122,43 @@ async def _patched_invoke(self, query, *args, **kwargs):
                     return await _original_invoke(self, query, *args, **kwargs)
                 except Exception as e:
                     err_str = str(e).lower()
-                    if isinstance(e, asyncio.TimeoutError) or "timeout" in err_str or "connection" in err_str or "flood" in err_str or "network" in err_str:
+                    if (
+                        isinstance(e, asyncio.TimeoutError)
+                        or "timeout" in err_str
+                        or "connection" in err_str
+                        or "flood" in err_str
+                        or "network" in err_str
+                    ):
                         if attempt < max_retries:
-                            delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                            delay = base_delay * (2**attempt) + random.uniform(0, 1)
                             if "flood" in err_str and hasattr(e, "value"):
-                                delay = min(e.value, 3.0)  # Wait for a shorter time, max 3 seconds
+                                delay = min(
+                                    e.value, 3.0
+                                )  # Wait for a shorter time, max 3 seconds
                             await asyncio.sleep(delay)
                             continue
 
-                        logger.warning(f"Drop updates for {type(query).__name__} due to error: {e}")
+                        logger.warning(
+                            f"Drop updates for {type(query).__name__} due to error: {e}"
+                        )
 
-                        if isinstance(query, raw.functions.updates.GetChannelDifference):
+                        if isinstance(
+                            query, raw.functions.updates.GetChannelDifference
+                        ):
                             from pyrogram.raw.types.updates import (
                                 ChannelDifferenceEmpty,
                             )
-                            return ChannelDifferenceEmpty(pts=query.pts, timeout=0, final=True)
+
+                            return ChannelDifferenceEmpty(
+                                pts=query.pts, timeout=0, final=True
+                            )
                         elif isinstance(query, raw.functions.updates.GetDifference):
                             from pyrogram.raw.types.updates import DifferenceEmpty
+
                             return DifferenceEmpty(date=query.date, seq=query.pts)
                     raise
     return await _original_invoke(self, query, *args, **kwargs)
+
 
 BaseClient.invoke = _patched_invoke
 
@@ -264,7 +287,9 @@ class Client(BaseClient):
                                 pass
 
                             wait_time = (attempt + 1) * 2
-                            logger.warning(f"Database locked when starting client {self.name}, retrying in {wait_time}s... ({attempt + 1}/{max_retries})")
+                            logger.warning(
+                                f"Database locked when starting client {self.name}, retrying in {wait_time}s... ({attempt + 1}/{max_retries})"
+                            )
                             await asyncio.sleep(wait_time)
                             continue
 
@@ -616,7 +641,9 @@ class BaseUserWorker(Generic[ConfigT]):
                             continue
                         chat_id = getattr(chat, "id", None)
                         if chat_id is None:
-                            self.log("get_dialogs 返回 chat.id 为空，已跳过", level="WARNING")
+                            self.log(
+                                "get_dialogs 返回 chat.id 为空，已跳过", level="WARNING"
+                            )
                             continue
                         latest_chats.append(
                             {
@@ -956,10 +983,14 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
                     print_to_user("计算题将使用大模型回答。")
                     actions.append(ReplyByCalculationProblemAction())
                 elif action == SupportAction.REPLY_BY_IMAGE_RECOGNITION:
-                    print_to_user("AI will recognize text from image and send it automatically.")
+                    print_to_user(
+                        "AI will recognize text from image and send it automatically."
+                    )
                     actions.append(ReplyByImageRecognitionAction())
                 elif action == SupportAction.CLICK_BUTTON_BY_CALCULATION_PROBLEM:
-                    print_to_user("AI will calculate the answer and click the matching button.")
+                    print_to_user(
+                        "AI will calculate the answer and click the matching button."
+                    )
                     actions.append(ClickButtonByCalculationProblemAction())
                 else:
                     raise ValueError(f"不支持的动作: {action}")
@@ -1070,9 +1101,12 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
             # 兼容历史配置：部分会话可能保存了缺失负号的 chat_id
             try:
                 from pyrogram.errors import ChannelInvalid, PeerIdInvalid
+
                 is_peer_invalid = isinstance(e, (PeerIdInvalid, ChannelInvalid))
             except Exception:
-                is_peer_invalid = any(x in str(e) for x in ("PEER_ID_INVALID", "CHANNEL_INVALID"))
+                is_peer_invalid = any(
+                    x in str(e) for x in ("PEER_ID_INVALID", "CHANNEL_INVALID")
+                )
 
             if is_peer_invalid and isinstance(chat.chat_id, int):
                 last_error = e
@@ -1171,7 +1205,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         total_actions = len(chat.actions)
         if total_actions == 0:
             raise RuntimeError("任务没有配置任何执行动作")
-        max_flow_attempts = _read_positive_int_env("SIGN_TASK_FLOW_RETRY_ATTEMPTS", 3, 1)
+        max_flow_attempts = _read_positive_int_env(
+            "SIGN_TASK_FLOW_RETRY_ATTEMPTS", 3, 1
+        )
         last_error: Exception | None = None
 
         for flow_attempt in range(1, max_flow_attempts + 1):
@@ -1181,9 +1217,7 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
                 self.context.chat_messages[chat.chat_id].clear()
                 for index, action in enumerate(chat.actions, start=1):
                     self.log(f"开始第 {index}/{total_actions} 步动作: {action}")
-                    next_action = (
-                        chat.actions[index] if index < total_actions else None
-                    )
+                    next_action = chat.actions[index] if index < total_actions else None
                     result = await self.wait_for(
                         chat,
                         action,
@@ -1293,7 +1327,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
                     config = self.load_config(self.cfg_cls)
                     new_chat_ids = [c.chat_id for c in config.chats]
                     if new_chat_ids != chat_ids and message_handler_ref is not None:
-                        self.log(f"chat_ids 已变更，重新注册 message handlers: {new_chat_ids}")
+                        self.log(
+                            f"chat_ids 已变更，重新注册 message handlers: {new_chat_ids}"
+                        )
                         try:
                             self.app.remove_handler(*message_handler_ref)
                         except Exception:
@@ -1312,7 +1348,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
                         MessageHandler(self.on_message, filters.chat(chat_ids))
                     )
                     edited_handler_ref = self.app.add_handler(
-                        EditedMessageHandler(self.on_edited_message, filters.chat(chat_ids))
+                        EditedMessageHandler(
+                            self.on_edited_message, filters.chat(chat_ids)
+                        )
                     )
                 try:
                     started_here = False
@@ -1395,7 +1433,10 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         )
         topic_matched = False
         for chat in chats:
-            if chat.message_thread_id is None or chat.message_thread_id == message_thread_id:
+            if (
+                chat.message_thread_id is None
+                or chat.message_thread_id == message_thread_id
+            ):
                 topic_matched = True
                 break
         if not topic_matched:
@@ -1408,15 +1449,21 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
 
     async def on_message(self, client: Client, message: Message):
         sender = message.from_user
-        sender_name = (getattr(sender, "username", None) or getattr(sender, "id", None)) if sender else message.chat.id
-        self.log(
-            f"收到来自「{sender_name}」的消息: {readable_message(message)}"
+        sender_name = (
+            (getattr(sender, "username", None) or getattr(sender, "id", None))
+            if sender
+            else message.chat.id
         )
+        self.log(f"收到来自「{sender_name}」的消息: {readable_message(message)}")
         await self._on_message(client, message)
 
     async def on_edited_message(self, client, message: Message):
         sender = message.from_user
-        sender_name = (getattr(sender, "username", None) or getattr(sender, "id", None)) if sender else message.chat.id
+        sender_name = (
+            (getattr(sender, "username", None) or getattr(sender, "id", None))
+            if sender
+            else message.chat.id
+        )
         self.log(
             f"收到来自「{sender_name}」对消息的更新，消息: {readable_message(message)}"
         )
@@ -1463,7 +1510,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
                 "reply",
                 tuple(
                     tuple(
-                        button if isinstance(button, str) else getattr(button, "text", "")
+                        button
+                        if isinstance(button, str)
+                        else getattr(button, "text", "")
                         for button in row
                     )
                     for row in reply_markup.keyboard
@@ -1563,7 +1612,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         if isinstance(action, ClickKeyboardByTextAction):
             return self._message_has_button_text(message, action.text)
         if isinstance(action, ChooseOptionByImageAction):
-            return bool(message.photo and isinstance(reply_markup, InlineKeyboardMarkup))
+            return bool(
+                message.photo and isinstance(reply_markup, InlineKeyboardMarkup)
+            )
         if isinstance(action, ReplyByCalculationProblemAction):
             return bool(message.text or message.caption)
         if isinstance(action, ReplyByImageRecognitionAction):
@@ -1755,7 +1806,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
                             level="WARNING",
                         )
                     else:
-                        self.log(f"Message.click 无法确认按钮回调: {e}", level="WARNING")
+                        self.log(
+                            f"Message.click 无法确认按钮回调: {e}", level="WARNING"
+                        )
                     break
 
         if callback_data is None:
@@ -1781,7 +1834,10 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
     ) -> tuple[bool, bool]:
         target_text = self._clean_text_for_match(action.text)
         if not target_text:
-            self.log("Click button action has empty target text after cleaning", level="WARNING")
+            self.log(
+                "Click button action has empty target text after cleaning",
+                level="WARNING",
+            )
             return False, False
 
         if reply_markup := message.reply_markup:
@@ -1792,7 +1848,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
                         continue
                     btn_text_clean = self._clean_text_for_match(btn.text)
                     if self._button_text_matches(target_text, btn_text_clean):
-                        self.log(f"成功匹配到并点击按钮: [{btn.text}] (匹配词: {action.text})")
+                        self.log(
+                            f"成功匹配到并点击按钮: [{btn.text}] (匹配词: {action.text})"
+                        )
                         if before_click:
                             await before_click()
                         return await self._click_inline_button(message, btn), True
@@ -1804,12 +1862,16 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
             elif isinstance(reply_markup, ReplyKeyboardMarkup):
                 for row in reply_markup.keyboard:
                     for btn in row:
-                        btn_text = btn if isinstance(btn, str) else getattr(btn, "text", "")
+                        btn_text = (
+                            btn if isinstance(btn, str) else getattr(btn, "text", "")
+                        )
                         if not btn_text:
                             continue
                         btn_text_clean = self._clean_text_for_match(btn_text)
                         if self._button_text_matches(target_text, btn_text_clean):
-                            self.log(f"成功匹配并发送回复键盘文本: [{btn_text}] (匹配词: {action.text})")
+                            self.log(
+                                f"成功匹配并发送回复键盘文本: [{btn_text}] (匹配词: {action.text})"
+                            )
                             kwargs = {}
                             if message_thread_id is not None:
                                 kwargs["message_thread_id"] = message_thread_id
@@ -1845,7 +1907,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         if text:
             # Guard: skip bot timeout/error messages
             if self._BOT_ERROR_PATTERN.search(text):
-                self.log("消息内容疑似 Bot 超时/取消提示，跳过 AI 计算", level="WARNING")
+                self.log(
+                    "消息内容疑似 Bot 超时/取消提示，跳过 AI 计算", level="WARNING"
+                )
                 return False
             self.log("检测到文本回复，尝试调用大模型进行计算题回答")
             self.log(f"问题: \n{text}")
@@ -1906,53 +1970,57 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         return await self._click_keyboard_by_text(proxy_action, message)
 
     async def _choose_option_by_image(self, action: ChooseOptionByImageAction, message):
-        if (reply_markup := message.reply_markup) and isinstance(reply_markup, InlineKeyboardMarkup) and message.photo:
-                flat_buttons = [b for row in reply_markup.inline_keyboard for b in row]
-                clickable_buttons = [btn for btn in flat_buttons if btn.text]
-                self.log("检测到图片按钮验证，调用 AI 识别并按顺序点击选项")
-                image_buffer: BinaryIO = await self.app.download_media(
-                    message.photo.file_id, in_memory=True
-                )
-                image_buffer.seek(0)
-                image_bytes = image_buffer.read()
-                options = [btn.text for btn in clickable_buttons]
-                if not options:
-                    self.log("未找到可供点击的按钮", level="WARNING")
+        if (
+            (reply_markup := message.reply_markup)
+            and isinstance(reply_markup, InlineKeyboardMarkup)
+            and message.photo
+        ):
+            flat_buttons = [b for row in reply_markup.inline_keyboard for b in row]
+            clickable_buttons = [btn for btn in flat_buttons if btn.text]
+            self.log("检测到图片按钮验证，调用 AI 识别并按顺序点击选项")
+            image_buffer: BinaryIO = await self.app.download_media(
+                message.photo.file_id, in_memory=True
+            )
+            image_buffer.seek(0)
+            image_bytes = image_buffer.read()
+            options = [btn.text for btn in clickable_buttons]
+            if not options:
+                self.log("未找到可供点击的按钮", level="WARNING")
+                return False
+            question_text = (
+                action.question
+                or (message.caption or message.text or "").strip()
+                or "选择正确的选项"
+            )
+            result_indexes = await self.get_ai_tools().choose_options_by_image(
+                image_bytes,
+                question_text,
+                list(enumerate(options, start=1)),
+            )
+            if not result_indexes:
+                self.log("AI 未返回可点击选项", level="WARNING")
+                return False
+            clicked = 0
+            for result_index in result_indexes:
+                if result_index == 0:
+                    selected_idx = 0
+                elif 1 <= result_index <= len(options):
+                    selected_idx = result_index - 1
+                elif 0 <= result_index < len(options):
+                    selected_idx = result_index
+                else:
+                    self.log(f"AI 返回了非法选项序号: {result_index}", level="WARNING")
                     return False
-                question_text = (
-                    action.question
-                    or (message.caption or message.text or "").strip()
-                    or "选择正确的选项"
-                )
-                result_indexes = await self.get_ai_tools().choose_options_by_image(
-                    image_bytes,
-                    question_text,
-                    list(enumerate(options, start=1)),
-                )
-                if not result_indexes:
-                    self.log("AI 未返回可点击选项", level="WARNING")
+                result = options[selected_idx]
+                self.log(f"AI 选择并点击选项: {result}")
+                target_btn = clickable_buttons[selected_idx]
+                if not target_btn:
+                    self.log("未找到匹配的按钮", level="WARNING")
                     return False
-                clicked = 0
-                for result_index in result_indexes:
-                    if result_index == 0:
-                        selected_idx = 0
-                    elif 1 <= result_index <= len(options):
-                        selected_idx = result_index - 1
-                    elif 0 <= result_index < len(options):
-                        selected_idx = result_index
-                    else:
-                        self.log(f"AI 返回了非法选项序号: {result_index}", level="WARNING")
-                        return False
-                    result = options[selected_idx]
-                    self.log(f"AI 选择并点击选项: {result}")
-                    target_btn = clickable_buttons[selected_idx]
-                    if not target_btn:
-                        self.log("未找到匹配的按钮", level="WARNING")
-                        return False
-                    if await self._click_inline_button(message, target_btn):
-                        clicked += 1
-                    await asyncio.sleep(0.3)
-                return clicked > 0
+                if await self._click_inline_button(message, target_btn):
+                    clicked += 1
+                await asyncio.sleep(0.3)
+            return clicked > 0
         return False
 
     async def wait_for(
@@ -1969,9 +2037,13 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
         if chat.message_thread_id is not None:
             kwargs["message_thread_id"] = chat.message_thread_id
         if isinstance(action, SendTextAction):
-            return await self.send_message(chat.chat_id, action.text, chat.delete_after, **kwargs)
+            return await self.send_message(
+                chat.chat_id, action.text, chat.delete_after, **kwargs
+            )
         elif isinstance(action, SendDiceAction):
-            return await self.send_dice(chat.chat_id, action.dice, chat.delete_after, **kwargs)
+            return await self.send_dice(
+                chat.chat_id, action.dice, chat.delete_after, **kwargs
+            )
         elif isinstance(action, KeywordNotifyAction):
             self.log("关键词监听通知动作为后台常驻监听配置，当前运行时跳过")
             return True
@@ -2064,9 +2136,11 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
 
                                 async def remember_before_click():
                                     nonlocal before_click_state
-                                    before_click_state = await self._chat_state_snapshot(
-                                        chat,
-                                        history_limit=history_limit,
+                                    before_click_state = (
+                                        await self._chat_state_snapshot(
+                                            chat,
+                                            history_limit=history_limit,
+                                        )
                                     )
 
                                 ok, matched = await self._click_keyboard_by_text_result(
@@ -2152,7 +2226,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
                     elif isinstance(action, ReplyByImageRecognitionAction):
                         ok = await self._reply_by_image_recognition(action, message)
                     elif isinstance(action, ClickButtonByCalculationProblemAction):
-                        ok = await self._click_button_by_calculation_problem(action, message)
+                        ok = await self._click_button_by_calculation_problem(
+                            action, message
+                        )
                     if ok:
                         # 将消息ID对应value置为None，保证收到消息的编辑时消息所处的顺序
                         self.context.chat_messages[chat.chat_id][message.id] = None
@@ -2171,7 +2247,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
             ):
                 try:
                     self.log("等待超时，尝试从历史消息中查找按钮", level="WARNING")
-                    async for message in self.app.get_chat_history(chat.chat_id, limit=history_limit):
+                    async for message in self.app.get_chat_history(
+                        chat.chat_id, limit=history_limit
+                    ):
                         if isinstance(action, ClickKeyboardByTextAction):
                             ok = await self._click_keyboard_by_text(
                                 action,
@@ -2179,7 +2257,9 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
                                 message_thread_id=chat.message_thread_id,
                             )
                         elif isinstance(action, ReplyByCalculationProblemAction):
-                            ok = await self._reply_by_calculation_problem(action, message)
+                            ok = await self._reply_by_calculation_problem(
+                                action, message
+                            )
                         elif isinstance(action, ChooseOptionByImageAction):
                             ok = await self._choose_option_by_image(action, message)
                         elif isinstance(action, ReplyByImageRecognitionAction):

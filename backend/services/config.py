@@ -55,7 +55,10 @@ class ConfigService:
                     else:
                         # Check if it's an account directory containing tasks
                         for task_dir in path.iterdir():
-                            if task_dir.is_dir() and (task_dir / "config.json").exists():
+                            if (
+                                task_dir.is_dir()
+                                and (task_dir / "config.json").exists()
+                            ):
                                 tasks.append(task_dir.name)
 
         return sorted(set(tasks))  # 去重并排序
@@ -115,7 +118,9 @@ class ConfigService:
             if not matches:
                 return None
             if len(matches) > 1:
-                raise ValueError(f"任务 {task_name} 存在于多个账号中，请指定 account_name")
+                raise ValueError(
+                    f"任务 {task_name} 存在于多个账号中，请指定 account_name"
+                )
             task_dir = matches[0]
             config_file = task_dir / "config.json"
 
@@ -177,7 +182,9 @@ class ConfigService:
             if not matches:
                 return False
             if len(matches) > 1:
-                raise ValueError(f"任务 {task_name} 存在于多个账号中，请指定 account_name")
+                raise ValueError(
+                    f"任务 {task_name} 存在于多个账号中，请指定 account_name"
+                )
             task_dir = matches[0]
 
         try:
@@ -195,6 +202,7 @@ class ConfigService:
             # 注意：如果是嵌套结构，这里只删除了任务目录，没有删除可能变空的账号目录
             # 这通常是可以接受的，或者我们可以检查父目录是否为空并删除
             import shutil
+
             shutil.rmtree(task_dir)
 
             return True
@@ -279,7 +287,7 @@ class ConfigService:
         all_configs = {
             "signs": {},
             "monitors": {},
-            "settings": {}, # 新增 settings 字段
+            "settings": {},  # 新增 settings 字段
         }
 
         # 导出所有签到任务
@@ -303,7 +311,9 @@ class ConfigService:
                     for task_dir in path.iterdir():
                         if task_dir.is_dir() and (task_dir / "config.json").exists():
                             try:
-                                with open(task_dir / "config.json", "r", encoding="utf-8") as f:
+                                with open(
+                                    task_dir / "config.json", "r", encoding="utf-8"
+                                ) as f:
                                     config = json.load(f)
                                     config.pop("last_run", None)
                                     key = f"{task_dir.name}_{path.name}"
@@ -315,6 +325,7 @@ class ConfigService:
 
                                     if key in all_configs["signs"]:
                                         import uuid
+
                                         key = f"{key}_{str(uuid.uuid4())[:8]}"
 
                                     all_configs["signs"][key] = config
@@ -423,7 +434,11 @@ class ConfigService:
                     # 当前 export_ai_config 直接读取文件，应该包含完整 key（文件里是明文）。前端展示才 mask。
                     # 所以这里导出的是完整 key，可以直接导入。
                     if ai_conf.get("api_key"):
-                        self.save_ai_config(ai_conf["api_key"], ai_conf.get("base_url"), ai_conf.get("model"))
+                        self.save_ai_config(
+                            ai_conf["api_key"],
+                            ai_conf.get("base_url"),
+                            ai_conf.get("model"),
+                        )
                         result["settings_imported"] += 1
                 except Exception as e:
                     result["errors"].append(f"Failed to import AI config: {e}")
@@ -432,15 +447,22 @@ class ConfigService:
             if "telegram" in settings_data:
                 try:
                     tg_conf = settings_data["telegram"]
-                    if tg_conf.get("is_custom") and tg_conf.get("api_id") and tg_conf.get("api_hash"):
-                         self.save_telegram_config(str(tg_conf["api_id"]), tg_conf["api_hash"])
-                         result["settings_imported"] += 1
+                    if (
+                        tg_conf.get("is_custom")
+                        and tg_conf.get("api_id")
+                        and tg_conf.get("api_hash")
+                    ):
+                        self.save_telegram_config(
+                            str(tg_conf["api_id"]), tg_conf["api_hash"]
+                        )
+                        result["settings_imported"] += 1
                 except Exception as e:
                     result["errors"].append(f"Failed to import Telegram config: {e}")
 
             # 关键修复：清除 SignTaskService 缓存，否则前端刷新也看不到新任务
             try:
                 from backend.services.sign_tasks import get_sign_task_service
+
                 get_sign_task_service()._tasks_cache = None
 
                 # 可选：触发调度同步？
@@ -674,7 +696,9 @@ class ConfigService:
             tmp_path = None
             try:
                 fd, tmp_path = tempfile.mkstemp(
-                    dir=str(config_file.parent), prefix=".global_settings.", suffix=".tmp"
+                    dir=str(config_file.parent),
+                    prefix=".global_settings.",
+                    suffix=".tmp",
                 )
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     json.dump(merged, f, ensure_ascii=False, indent=2)

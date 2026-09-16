@@ -63,11 +63,7 @@ for _noisy in ("pyrogram", "apscheduler", "httpx", "httpcore"):
 class HealthCheckFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
-        return (
-            "/health" not in msg
-            and "/healthz" not in msg
-            and "/readyz" not in msg
-        )
+        return "/health" not in msg and "/healthz" not in msg and "/readyz" not in msg
 
 
 logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
@@ -119,6 +115,7 @@ def get_version() -> dict[str, str]:
     if not built_at:
         import shutil
         import subprocess
+
         if shutil.which("git"):
             try:
                 built_at = subprocess.check_output(

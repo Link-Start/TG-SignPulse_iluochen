@@ -222,6 +222,7 @@ class ReplyByCalculationProblemAction(SignAction):
         SupportAction.REPLY_BY_CALCULATION_PROBLEM
     )
 
+
 class ReplyByImageRecognitionAction(SignAction):
     action: Literal[SupportAction.REPLY_BY_IMAGE_RECOGNITION] = (
         SupportAction.REPLY_BY_IMAGE_RECOGNITION
@@ -239,7 +240,9 @@ class KeywordNotifyAction(SignAction):
     keywords: list[str]
     match_mode: Literal["contains", "exact", "regex"] = "contains"
     ignore_case: bool = True
-    push_channel: Literal["telegram", "forward", "bark", "custom", "continue"] = "telegram"
+    push_channel: Literal["telegram", "forward", "bark", "custom", "continue"] = (
+        "telegram"
+    )
     bark_url: str | None = None
     custom_url: str | None = None
     forward_chat_id: int | str | None = None
@@ -250,7 +253,16 @@ class KeywordNotifyAction(SignAction):
     continue_actions: list[dict[str, Any]] = Field(default_factory=list)
 
 
-ActionT: TypeAlias = SendTextAction | SendDiceAction | ClickKeyboardByTextAction | ChooseOptionByImageAction | ReplyByCalculationProblemAction | ReplyByImageRecognitionAction | ClickButtonByCalculationProblemAction | KeywordNotifyAction
+ActionT: TypeAlias = (
+    SendTextAction
+    | SendDiceAction
+    | ClickKeyboardByTextAction
+    | ChooseOptionByImageAction
+    | ReplyByCalculationProblemAction
+    | ReplyByImageRecognitionAction
+    | ClickButtonByCalculationProblemAction
+    | KeywordNotifyAction
+)
 
 
 class SignChatV3(BaseJSONConfig):
@@ -410,12 +422,8 @@ class MatchConfig(BaseJSONConfig):
     send_text_search_regex: str | None = None  # 用正则表达式从消息中提取发送内容
     delete_after: int | None = None
     ignore_case: bool = True  # 忽略大小写
-    forward_to_chat_id: int | str | None = (
-        None  # 转发消息到该聊天，默认为消息来源
-    )
-    external_forwards: list[UDPForward | HttpCallback] | None = (
-        None  # 转发到外部
-    )
+    forward_to_chat_id: int | str | None = None  # 转发消息到该聊天，默认为消息来源
+    external_forwards: list[UDPForward | HttpCallback] | None = None  # 转发到外部
     push_via_server_chan: bool = False  # 将消息通过server酱推送
     server_chan_send_key: str | None = None  # server酱的sendkey
 

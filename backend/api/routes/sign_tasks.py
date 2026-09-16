@@ -211,6 +211,7 @@ def _inject_next_run_times(tasks: list[dict]) -> list[dict]:
     """向任务列表注入 APScheduler 的下次触发时间"""
     try:
         from backend.scheduler import scheduler as _scheduler
+
         if not _scheduler:
             return tasks
         for task in tasks:
@@ -292,7 +293,9 @@ async def update_sign_task(
     """更新签到任务"""
     try:
         # 检查任务是否存在
-        existing = get_sign_task_service().get_task(task_name, account_name=account_name)
+        existing = get_sign_task_service().get_task(
+            task_name, account_name=account_name
+        )
         if not existing:
             raise HTTPException(status_code=404, detail=f"任务 {task_name} 不存在")
 
@@ -528,7 +531,9 @@ async def sign_task_logs_ws(
 
     try:
         while True:
-            snapshot = service.get_run_logs_since(task_name, account_name, run_id, cursor)
+            snapshot = service.get_run_logs_since(
+                task_name, account_name, run_id, cursor
+            )
             run_id, cursor = snapshot["run_id"], snapshot["cursor"]
             lines: list[str] = list(snapshot["lines"])
 
@@ -562,7 +567,9 @@ async def sign_task_logs_ws(
                 last_send = now
 
             # 任务结束且日志已推完；尚无运行记录时给任务留出启动时间
-            waiting_start = not snapshot["exists"] and now - started_at < _WS_WAIT_START_SECONDS
+            waiting_start = (
+                not snapshot["exists"] and now - started_at < _WS_WAIT_START_SECONDS
+            )
             if not running and not waiting_start:
                 result = service.get_last_run_result(task_name, account_name) or {}
                 await websocket.send_json(

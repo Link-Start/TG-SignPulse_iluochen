@@ -156,7 +156,9 @@ def _render_template(value: Any, variables: dict[str, str]) -> Any:
     return _TEMPLATE_PATTERN.sub(replace, value)
 
 
-def _render_action_templates(action: dict[str, Any], variables: dict[str, str]) -> dict[str, Any]:
+def _render_action_templates(
+    action: dict[str, Any], variables: dict[str, str]
+) -> dict[str, Any]:
     rendered: dict[str, Any] = {}
     for key, value in action.items():
         if isinstance(value, str):
@@ -256,7 +258,9 @@ def _message_has_button_text(message: Message, text: str) -> bool:
 
     for row in rows:
         for button in row:
-            button_text = button if isinstance(button, str) else getattr(button, "text", "")
+            button_text = (
+                button if isinstance(button, str) else getattr(button, "text", "")
+            )
             if not button_text:
                 continue
             if _button_text_matches(target_text, _clean_text_for_match(button_text)):
@@ -371,9 +375,13 @@ class KeywordMonitorService:
             active=active,
         )
 
-    def get_task_logs(self, task_name: str, account_name: str | None = None) -> list[str]:
+    def get_task_logs(
+        self, task_name: str, account_name: str | None = None
+    ) -> list[str]:
         if account_name:
-            return list(self._task_logs.get(self._task_key(account_name, task_name), []))
+            return list(
+                self._task_logs.get(self._task_key(account_name, task_name), [])
+            )
 
         for (_item_account, item_task), logs in self._task_logs.items():
             if item_task == task_name:
@@ -656,7 +664,12 @@ class KeywordMonitorService:
                     logger.warning("Keyword monitor callback FloodWait failed: %s", exc)
                     return False
                 await asyncio.sleep(wait_seconds)
-            except (TimeoutError, asyncio.TimeoutError, OSError, ConnectionError) as exc:
+            except (
+                TimeoutError,
+                asyncio.TimeoutError,
+                OSError,
+                ConnectionError,
+            ) as exc:
                 if attempt >= max_retries:
                     logger.warning(
                         "Keyword monitor button callback did not respond after retries: %s",
@@ -670,11 +683,15 @@ class KeywordMonitorService:
                         "Keyword monitor callback returned DATA_INVALID; waiting for follow-up messages"
                     )
                     return False
-                logger.warning("Keyword monitor callback could not be confirmed: %s", exc)
+                logger.warning(
+                    "Keyword monitor callback could not be confirmed: %s", exc
+                )
                 return False
         return False
 
-    async def _click_inline_button(self, client: Any, message: Message, button: Any) -> bool:
+    async def _click_inline_button(
+        self, client: Any, message: Message, button: Any
+    ) -> bool:
         callback_data = getattr(button, "callback_data", None)
         if callback_data is not None and await self._request_callback_answer(
             client, message.chat.id, message.id, callback_data
@@ -719,24 +736,34 @@ class KeywordMonitorService:
 
         reply_markup = getattr(message, "reply_markup", None)
         if isinstance(reply_markup, InlineKeyboardMarkup):
-            flat_buttons = (button for row in reply_markup.inline_keyboard for button in row)
+            flat_buttons = (
+                button for row in reply_markup.inline_keyboard for button in row
+            )
             for button in flat_buttons:
                 button_text = getattr(button, "text", None)
                 if not button_text:
                     continue
-                if _button_text_matches(target_text, _clean_text_for_match(button_text)):
-                    return await self._click_inline_button(client, message, button), True
+                if _button_text_matches(
+                    target_text, _clean_text_for_match(button_text)
+                ):
+                    return await self._click_inline_button(
+                        client, message, button
+                    ), True
             return False, False
 
         if isinstance(reply_markup, ReplyKeyboardMarkup):
             for row in reply_markup.keyboard:
                 for button in row:
                     button_text = (
-                        button if isinstance(button, str) else getattr(button, "text", "")
+                        button
+                        if isinstance(button, str)
+                        else getattr(button, "text", "")
                     )
                     if not button_text:
                         continue
-                    if _button_text_matches(target_text, _clean_text_for_match(button_text)):
+                    if _button_text_matches(
+                        target_text, _clean_text_for_match(button_text)
+                    ):
                         kwargs: dict[str, Any] = {}
                         if target_thread_id is not None:
                             kwargs["message_thread_id"] = target_thread_id
@@ -779,7 +806,9 @@ class KeywordMonitorService:
         if action_id == 3:
             return bool(reply_markup)
         if action_id == 4:
-            return bool(message.photo and isinstance(reply_markup, InlineKeyboardMarkup))
+            return bool(
+                message.photo and isinstance(reply_markup, InlineKeyboardMarkup)
+            )
         if action_id == 5:
             return bool(message.text or message.caption)
         if action_id == 6:
@@ -846,9 +875,8 @@ class KeywordMonitorService:
                 if before_state.get(message_id) != marker
             }
             for message in messages:
-                if (
-                    message.id in changed_ids
-                    and _message_supports_continue_action(message, action)
+                if message.id in changed_ids and _message_supports_continue_action(
+                    message, action
                 ):
                     return True
         return False
@@ -881,7 +909,9 @@ class KeywordMonitorService:
         return False
 
     async def _download_photo_bytes(self, client: Any, message: Message) -> bytes:
-        image_buffer = await client.download_media(message.photo.file_id, in_memory=True)
+        image_buffer = await client.download_media(
+            message.photo.file_id, in_memory=True
+        )
         image_buffer.seek(0)
         return image_buffer.read()
 
@@ -929,12 +959,18 @@ class KeywordMonitorService:
             reply_markup = getattr(message, "reply_markup", None)
             if not isinstance(reply_markup, InlineKeyboardMarkup) or not message.photo:
                 return False
-            flat_buttons = [button for row in reply_markup.inline_keyboard for button in row]
-            clickable_buttons = [button for button in flat_buttons if getattr(button, "text", None)]
+            flat_buttons = [
+                button for row in reply_markup.inline_keyboard for button in row
+            ]
+            clickable_buttons = [
+                button for button in flat_buttons if getattr(button, "text", None)
+            ]
             if not clickable_buttons:
                 return False
             image_bytes = await self._download_photo_bytes(client, message)
-            question_text = (message.caption or message.text or "").strip() or "Choose the correct option"
+            question_text = (
+                message.caption or message.text or ""
+            ).strip() or "Choose the correct option"
             options = [button.text for button in clickable_buttons]
             result_indexes = await ai_tools.choose_options_by_image(
                 image_bytes,
@@ -951,7 +987,9 @@ class KeywordMonitorService:
                     selected_index = result_index
                 else:
                     return False
-                if await self._click_inline_button(client, message, clickable_buttons[selected_index]):
+                if await self._click_inline_button(
+                    client, message, clickable_buttons[selected_index]
+                ):
                     clicked += 1
                 await asyncio.sleep(0.3)
             return clicked > 0
@@ -1133,9 +1171,7 @@ class KeywordMonitorService:
             )
             for index, action in enumerate(rendered_actions, start=1):
                 next_action = (
-                    rendered_actions[index]
-                    if index < len(rendered_actions)
-                    else None
+                    rendered_actions[index] if index < len(rendered_actions) else None
                 )
                 started = time.perf_counter()
                 action_desc = self._describe_continue_action(action)
@@ -1190,7 +1226,9 @@ class KeywordMonitorService:
                     await asyncio.sleep(max(interval - elapsed, 0.0))
             self._append_rule_log(rule, "关键词命中后续动作全部执行完成")
 
-    async def _on_message(self, account_name: str, client: Any, message: Message) -> None:
+    async def _on_message(
+        self, account_name: str, client: Any, message: Message
+    ) -> None:
         try:
             from backend.services.config import get_config_service
 
@@ -1267,7 +1305,9 @@ class KeywordMonitorService:
                     url=url,
                 )
 
-                push_channel = str(rule.action.get("push_channel") or "telegram").strip()
+                push_channel = str(
+                    rule.action.get("push_channel") or "telegram"
+                ).strip()
                 continue_enabled = push_channel == "continue"
                 forward_chat_id = (
                     _parse_forward_chat_id(rule.action.get("forward_chat_id"))
@@ -1313,7 +1353,9 @@ class KeywordMonitorService:
                 if push_channel not in {"forward", "continue"}:
                     push_settings = dict(global_settings)
                     push_settings["keyword_monitor_push_channel"] = push_channel
-                    push_settings["keyword_monitor_bark_url"] = rule.action.get("bark_url")
+                    push_settings["keyword_monitor_bark_url"] = rule.action.get(
+                        "bark_url"
+                    )
                     push_settings["keyword_monitor_custom_url"] = rule.action.get(
                         "custom_url"
                     )
@@ -1402,11 +1444,15 @@ class KeywordMonitorService:
             accounts = sorted({rule.account_name for rule in rules})
             started_accounts: set[str] = set()
             for account_name in accounts:
-                account_rules = [rule for rule in rules if rule.account_name == account_name]
+                account_rules = [
+                    rule for rule in rules if rule.account_name == account_name
+                ]
                 chat_ids = sorted({rule.chat_id for rule in account_rules})
                 proxy_value = get_account_proxy(account_name)
                 if not proxy_value:
-                    proxy_value = (global_settings.get("global_proxy") or "").strip() or None
+                    proxy_value = (
+                        global_settings.get("global_proxy") or ""
+                    ).strip() or None
                 proxy = build_proxy_dict(proxy_value) if proxy_value else None
 
                 session_mode = get_session_mode()

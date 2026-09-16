@@ -23,6 +23,7 @@ def make_message(text=None, caption=None, photo=None, reply_markup=None):
 
 # ── _reply_by_calculation_problem：caption 回退 ──────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_reply_by_calculation_problem_uses_caption():
     """当 message.text 为 None 而 caption 有值时，应读取 caption"""
@@ -57,13 +58,16 @@ async def test_reply_by_calculation_problem_prefers_text():
 
 # ── _choose_option_by_image：question 字段回退逻辑 ───────────────────────────
 
+
 def test_choose_option_question_uses_action_question():
     """action.question 优先于 message.caption"""
     action = MagicMock()
     action.question = "点哪个按钮?"
     msg = make_message(caption="原始 caption")
 
-    question_text = action.question or (msg.caption or msg.text or "").strip() or "选择正确的选项"
+    question_text = (
+        action.question or (msg.caption or msg.text or "").strip() or "选择正确的选项"
+    )
     assert question_text == "点哪个按钮?"
 
 
@@ -73,7 +77,9 @@ def test_choose_option_question_falls_back_to_caption():
     action.question = None
     msg = make_message(caption="请选择正确答案")
 
-    question_text = action.question or (msg.caption or msg.text or "").strip() or "选择正确的选项"
+    question_text = (
+        action.question or (msg.caption or msg.text or "").strip() or "选择正确的选项"
+    )
     assert question_text == "请选择正确答案"
 
 
@@ -83,7 +89,9 @@ def test_choose_option_question_falls_back_to_text():
     action.question = None
     msg = make_message(text="文字题目", caption=None)
 
-    question_text = action.question or (msg.caption or msg.text or "").strip() or "选择正确的选项"
+    question_text = (
+        action.question or (msg.caption or msg.text or "").strip() or "选择正确的选项"
+    )
     assert question_text == "文字题目"
 
 
@@ -93,12 +101,15 @@ def test_choose_option_question_uses_default():
     action.question = None
     msg = make_message(text=None, caption=None)
 
-    question_text = action.question or (msg.caption or msg.text or "").strip() or "选择正确的选项"
+    question_text = (
+        action.question or (msg.caption or msg.text or "").strip() or "选择正确的选项"
+    )
     assert question_text == "选择正确的选项"
 
 
 # ── _button_text_matches：按钮匹配逻辑 ──────────────────────────────────────
 # 该方法是实例方法，通过 MagicMock signer 实例直接提取纯逻辑测试
+
 
 def _btn_matches(target: str, button: str) -> bool:
     """复制 UserSigner._button_text_matches 的纯逻辑，无需实例化"""

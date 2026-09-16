@@ -22,7 +22,9 @@ _GLOBAL_SEMAPHORE: asyncio.Semaphore | None = None
 # 写操作「读-改-写」整体加锁，避免互相覆盖；读操作按文件 mtime/size 复用解析结果，
 # 列表页每个账号都要读 profile/status，缓存后不必每次重新解析整个文件
 _ACCOUNT_STORE_LOCK = threading.RLock()
-_ACCOUNT_STORE_CACHE: tuple[str, int, int, dict] | None = None  # (path, mtime_ns, size, data)
+_ACCOUNT_STORE_CACHE: tuple[str, int, int, dict] | None = (
+    None  # (path, mtime_ns, size, data)
+)
 
 
 def get_session_mode() -> str:
@@ -99,7 +101,9 @@ def _save_account_store(data: dict) -> None:
     path = _account_store_path()
     with _ACCOUNT_STORE_LOCK:
         # 临时文件名唯一，并发写不会互相踩到同一个 .tmp
-        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".accounts.", suffix=".tmp")
+        fd, tmp_name = tempfile.mkstemp(
+            dir=path.parent, prefix=".accounts.", suffix=".tmp"
+        )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -180,7 +184,6 @@ def get_account_proxy(account_name: str) -> str | None:
     if isinstance(proxy, str) and proxy.strip():
         return proxy.strip()
     return None
-
 
 
 def get_account_remark(account_name: str) -> str | None:

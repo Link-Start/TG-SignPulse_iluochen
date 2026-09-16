@@ -34,7 +34,9 @@ def tg_monitor(ctx: click.Context):
     ]:
         if proxy := ctx.obj.get("proxy"):
             logger.info(
-                "Using proxy: {}".format(f"{proxy['scheme']}://{proxy['hostname']}:{proxy['port']}")
+                "Using proxy: {}".format(
+                    f"{proxy['scheme']}://{proxy['hostname']}:{proxy['port']}"
+                )
             )
         logger.info(f"Using account: {ctx.obj['account']}")
 

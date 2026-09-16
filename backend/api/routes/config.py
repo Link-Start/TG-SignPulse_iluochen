@@ -416,7 +416,9 @@ async def save_global_settings(
             "telegram_bot_chat_id": request.telegram_bot_chat_id,
             "telegram_bot_message_thread_id": request.telegram_bot_message_thread_id,
         }
-        fields_set = getattr(request, "model_fields_set", getattr(request, "__fields_set__", set()))
+        fields_set = getattr(
+            request, "model_fields_set", getattr(request, "__fields_set__", set())
+        )
         if "data_dir" in fields_set:
             settings["data_dir"] = request.data_dir
 
@@ -448,18 +450,23 @@ async def test_telegram_bot(
 ):
     try:
         if not request.bot_token or not request.chat_id:
-            return TelegramTestResponse(success=False, message="Bot Token 和 Chat ID 不能为空")
+            return TelegramTestResponse(
+                success=False, message="Bot Token 和 Chat ID 不能为空"
+            )
 
         from backend.services.push_notifications import send_telegram_bot_message
+
         await send_telegram_bot_message(
             bot_token=request.bot_token,
             chat_id=request.chat_id,
             text="TG-SignPulse 测试消息\n\n🎉 您的 Telegram Bot 通知配置工作正常！",
-            message_thread_id=request.message_thread_id
+            message_thread_id=request.message_thread_id,
         )
         return TelegramTestResponse(success=True, message="测试通知发送成功")
     except Exception as e:
-        return TelegramTestResponse(success=False, message=f"发送失败 [{type(e).__name__}]: {e}")
+        return TelegramTestResponse(
+            success=False, message=f"发送失败 [{type(e).__name__}]: {e}"
+        )
 
 
 class TelegramConfigRequest(BaseModel):

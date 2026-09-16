@@ -28,6 +28,7 @@ def _get_global_proxy() -> str | None:
     env_proxy = os.environ.get("TG_PROXY", "").strip()
     if env_proxy:
         from backend.utils.proxy import normalize_proxy_url
+
         return normalize_proxy_url(env_proxy)
 
     try:
@@ -68,6 +69,7 @@ def _get_mtproto_proxy() -> dict[str, Any] | None:
         return None
     try:
         from backend.utils.proxy import build_proxy_dict
+
         return build_proxy_dict(proxy_url)
     except Exception:
         return None
@@ -132,7 +134,11 @@ async def send_telegram_bot_message(
         )
         return
     except Exception as e:
-        logger.warning("MTProto bot send failed (%s: %s), falling back to HTTP", type(e).__name__, e)
+        logger.warning(
+            "MTProto bot send failed (%s: %s), falling back to HTTP",
+            type(e).__name__,
+            e,
+        )
 
     # Fallback: HTTP Bot API
     payload: dict[str, Any] = {
@@ -244,14 +250,12 @@ async def send_login_notification(
         logger.warning("Telegram login notification is not configured")
         return
 
-    text = (
-        "TG-SignPulse 登录通知\n"
-        f"用户: {username}\n"
-        f"IP: {ip_address or 'unknown'}"
-    )
+    text = f"TG-SignPulse 登录通知\n用户: {username}\nIP: {ip_address or 'unknown'}"
     await send_telegram_bot_message(
         bot_token=bot_token,
         chat_id=chat_id,
         text=text,
-        message_thread_id=_as_int_or_none(settings.get("telegram_bot_message_thread_id")),
+        message_thread_id=_as_int_or_none(
+            settings.get("telegram_bot_message_thread_id")
+        ),
     )

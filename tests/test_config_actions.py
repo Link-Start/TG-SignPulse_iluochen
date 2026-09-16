@@ -15,8 +15,11 @@ from tg_signer.config import (
 
 # ── SignChatV3 解析 ──────────────────────────────────────────────────────────
 
+
 def make_chat(actions: list) -> SignChatV3:
-    return SignChatV3.parse_obj({"chat_id": 123, "actions": actions, "action_interval": 1})
+    return SignChatV3.parse_obj(
+        {"chat_id": 123, "actions": actions, "action_interval": 1}
+    )
 
 
 def test_send_text_action():
@@ -41,7 +44,9 @@ def test_click_keyboard_action():
 
 
 def test_choose_option_by_image_question_field():
-    chat = make_chat([{"action": 1, "text": "go"}, {"action": 4, "question": "点哪个按钮?"}])
+    chat = make_chat(
+        [{"action": 1, "text": "go"}, {"action": 4, "question": "点哪个按钮?"}]
+    )
     act = chat.actions[1]
     assert isinstance(act, ChooseOptionByImageAction)
     assert act.question == "点哪个按钮?"
@@ -54,16 +59,18 @@ def test_choose_option_by_image_no_question():
 
 
 def test_keyword_notify_action():
-    chat = make_chat([
-        {"action": 1, "text": "go"},
-        {
-            "action": 8,
-            "keywords": ["签到成功", "已签到"],
-            "match_mode": "contains",
-            "ignore_case": True,
-            "push_channel": "telegram",
-        },
-    ])
+    chat = make_chat(
+        [
+            {"action": 1, "text": "go"},
+            {
+                "action": 8,
+                "keywords": ["签到成功", "已签到"],
+                "match_mode": "contains",
+                "ignore_case": True,
+                "push_channel": "telegram",
+            },
+        ]
+    )
     act = chat.actions[1]
     assert isinstance(act, KeywordNotifyAction)
     assert "签到成功" in act.keywords
@@ -71,6 +78,7 @@ def test_keyword_notify_action():
 
 
 # ── requires_ai / requires_updates ──────────────────────────────────────────
+
 
 def test_requires_ai_false_for_text_only():
     chat = make_chat([{"action": 1, "text": "/sign"}])
@@ -98,15 +106,23 @@ def test_requires_updates_true_for_click_keyboard():
 
 
 def test_requires_updates_true_for_keyword_notify():
-    chat = make_chat([
-        {"action": 1, "text": "go"},
-        {"action": 8, "keywords": ["ok"], "match_mode": "contains",
-         "ignore_case": False, "push_channel": "telegram"},
-    ])
+    chat = make_chat(
+        [
+            {"action": 1, "text": "go"},
+            {
+                "action": 8,
+                "keywords": ["ok"],
+                "match_mode": "contains",
+                "ignore_case": False,
+                "push_channel": "telegram",
+            },
+        ]
+    )
     assert chat.requires_updates
 
 
 # ── SignChatV3 字段默认值 ────────────────────────────────────────────────────
+
 
 def test_default_action_interval():
     chat = make_chat([{"action": 1, "text": "/sign"}])

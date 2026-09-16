@@ -9,7 +9,10 @@ from tg_signer.core import UserSigner, get_proxy
 
 
 class AliasedGroup(click.Group):
-    _aliases: ClassVar[dict[str, str]] = {"run_once": "run-once", "send_text": "send-text"}
+    _aliases: ClassVar[dict[str, str]] = {
+        "run_once": "run-once",
+        "send_text": "send-text",
+    }
 
     def __init__(self, name, aliases: dict[str, str] | None = None, *args, **kwargs):
         self.aliases = self._aliases.copy()
@@ -40,9 +43,7 @@ class AliasedGroup(click.Group):
                 formatter.write_text(f"{k} -> {v}")
 
 
-def get_signer(
-    task_name, ctx_obj: dict, loop: asyncio.AbstractEventLoop | None = None
-):
+def get_signer(task_name, ctx_obj: dict, loop: asyncio.AbstractEventLoop | None = None):
     signer = UserSigner(
         task_name=task_name,
         account=ctx_obj["account"],
@@ -162,7 +163,9 @@ def tg_signer(
     ]:
         if proxy:
             logger.info(
-                "Using proxy: {}".format(f"{proxy['scheme']}://{proxy['hostname']}:{proxy['port']}")
+                "Using proxy: {}".format(
+                    f"{proxy['scheme']}://{proxy['hostname']}:{proxy['port']}"
+                )
             )
         logger.info(f"Using account: {account}")
     ctx.obj["proxy"] = proxy
@@ -457,4 +460,3 @@ def llm_config(obj):
 
     cfg_manager = OpenAIConfigManager(obj["workdir"])
     cfg_manager.ask_for_config()
-

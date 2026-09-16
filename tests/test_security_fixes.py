@@ -121,7 +121,9 @@ def test_login_flags_default_password(auth_app):
     add_user("other", "a-strong-pass")
 
     assert _login(client, "admin", "admin123").json()["must_change_password"] is True
-    assert _login(client, "other", "a-strong-pass").json()["must_change_password"] is False
+    assert (
+        _login(client, "other", "a-strong-pass").json()["must_change_password"] is False
+    )
 
 
 def test_change_password_rejects_default_password(auth_app):

@@ -44,7 +44,9 @@ async def async_run_task_cli(
         try:
             from backend.services.config import get_config_service
 
-            global_proxy = get_config_service().get_global_settings().get("global_proxy")
+            global_proxy = (
+                get_config_service().get_global_settings().get("global_proxy")
+            )
             if isinstance(global_proxy, str) and global_proxy.strip():
                 env["TG_PROXY"] = global_proxy.strip()
         except Exception:
