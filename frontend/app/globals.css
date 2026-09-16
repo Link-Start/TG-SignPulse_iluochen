@@ -532,6 +532,13 @@
     }
   }
 
+  /* 登录页色区里的品牌脉冲线，打开时从左到右画出 */
+  .login-wave path {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: wave-draw 1.6s cubic-bezier(0.65, 0, 0.35, 1) 0.15s forwards;
+  }
+
   /* ── 卡片与列表 ── */
 
   .group-list {
@@ -1303,6 +1310,12 @@
   }
   to {
     transform: scaleY(1);
+  }
+}
+
+@keyframes wave-draw {
+  to {
+    stroke-dashoffset: 0;
   }
 }
 

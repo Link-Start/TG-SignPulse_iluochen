@@ -54,11 +54,24 @@ export default function LoginForm() {
           <BrandMark size={60} className="rounded-[18px]" />
           <h1 className="mt-4 text-[30px] font-bold leading-9 tracking-[-0.02em]">TG SignPulse</h1>
           <p className="on-field-2 mt-1 text-[15px]">{t("login_tagline")}</p>
-          <div aria-hidden className="pulse mt-8 h-7 w-full max-w-[360px]">
-            {Array.from({ length: 30 }).map((_, index) => (
-              <i key={index} className={index < 3 ? "is-empty" : index === 29 ? "is-today" : undefined} />
-            ))}
-          </div>
+          {/* 放大的品牌脉冲线：纯装饰，不用状态条，状态条只承载真实数据 */}
+          <svg aria-hidden viewBox="0 0 360 40" fill="none" className="login-wave mt-6 h-10 w-full max-w-[360px]">
+            <defs>
+              <linearGradient id="login-wave-fade" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="360" y2="0">
+                <stop offset="0" stopColor="#fff" stopOpacity="0" />
+                <stop offset="0.5" stopColor="#fff" stopOpacity="0.95" />
+                <stop offset="1" stopColor="#fff" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <path
+              d="M0 20H161l8.8-13 14.4 26 9.6-16.9 5.2 3.9H360"
+              pathLength={1}
+              stroke="url(#login-wave-fade)"
+              strokeWidth={2.2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </div>
       </header>
 
