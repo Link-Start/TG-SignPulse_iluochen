@@ -1,34 +1,59 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
-import { ThemeProvider } from "../context/ThemeContext";
 import { LanguageProvider } from "../context/LanguageContext";
-
-const inter = Inter({ subsets: ["latin"] });
+import { ThemeProvider, THEME_INIT_SCRIPT } from "../context/ThemeContext";
+import { ToastProvider } from "../components/ui/toast";
+import { ConfirmProvider } from "../components/ui/confirm";
 
 export const metadata: Metadata = {
   title: "TG SignPulse",
   description: "TG SignPulse",
+  applicationName: "TG SignPulse",
+  manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
+  },
+  appleWebApp: {
+    capable: true,
+    title: "SignPulse",
+    statusBarStyle: "black-translucent",
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-}
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#3c4b5e" },
+    { media: "(prefers-color-scheme: dark)", color: "#243040" },
+  ],
+};
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html lang="zh">
-      <body className={inter.className}>
+    <html lang="zh-CN" suppressHydrationWarning>
+      <head>
+        {/* 在首帧渲染前应用主题，避免深色用户看到浅色闪烁 */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
+      <body>
         <LanguageProvider>
           <ThemeProvider>
-            {children}
+            <ToastProvider>
+              <ConfirmProvider>{children}</ConfirmProvider>
+            </ToastProvider>
           </ThemeProvider>
         </LanguageProvider>
       </body>

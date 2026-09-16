@@ -1,0 +1,17 @@
+{
+  "name": "TG SignPulse",
+  "short_name": "SignPulse",
+  "description": "Telegram 多账号自动签到面板",
+  "id": "/dashboard",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f2f4f7",
+  "theme_color": "#3c4b5e",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

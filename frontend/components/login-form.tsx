@@ -2,15 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { GithubLogo, WarningCircle } from "@phosphor-icons/react";
 import { login } from "../lib/api";
 import { setMustChangePassword, setToken } from "../lib/auth";
-import {
-  Lightning,
-  Spinner,
-  GithubLogo
-} from "@phosphor-icons/react";
-import { ThemeLanguageToggle } from "./ThemeLanguageToggle";
 import { useLanguage } from "../context/LanguageContext";
+import { ThemeLanguageToggle } from "./ThemeLanguageToggle";
+import { BrandMark } from "./ui/brand";
+import { Spinner } from "./ui/controls";
 
 export default function LoginForm() {
   const router = useRouter();
@@ -24,113 +22,135 @@ export default function LoginForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!username.trim() || !password) {
+      setErrorMsg(t("login_fields_required"));
+      return;
+    }
     setLoading(true);
     setErrorMsg("");
     try {
-      const res = await login({ username, password, totp_code: totp || undefined });
+      const res = await login({ username: username.trim(), password, totp_code: totp || undefined });
       setToken(res.access_token);
       setMustChangePassword(Boolean(res.must_change_password));
       router.push(res.must_change_password ? "/dashboard/settings" : "/dashboard");
     } catch (err: any) {
-      const msg = err?.message || "";
-      let displayMsg = t("login_failed");
-      const lowerMsg = msg.toLowerCase();
-
-      if (lowerMsg.includes("totp")) {
-        displayMsg = t("totp_error");
-      } else if (lowerMsg.includes("invalid") || lowerMsg.includes("credentials") || lowerMsg.includes("password")) {
-        displayMsg = t("user_or_pass_error");
-      } else if (!msg) {
-        displayMsg = t("login_failed");
+      const msg = String(err?.message || "").toLowerCase();
+      if (msg.includes("totp")) {
+        setErrorMsg(t("totp_error"));
+      } else if (msg.includes("invalid") || msg.includes("credentials") || msg.includes("password")) {
+        setErrorMsg(t("user_or_pass_error"));
+      } else {
+        setErrorMsg(t("login_failed"));
       }
-      setErrorMsg(displayMsg);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div id="login-view" className="w-full min-h-screen flex flex-col justify-center items-center relative p-4 overflow-x-hidden bg-black/5 dark:bg-black/20">
-      <div className="glass-panel w-full max-w-[420px] p-6 md:p-8 text-center animate-float-up border border-black/5 dark:border-white/5 shadow-2xl">
-        <div className="mb-4">
-          <Lightning
-            weight="fill"
-            className="inline-block"
-            style={{ fontSize: '48px', color: '#fcd34d', filter: 'drop-shadow(0 0 12px rgba(252, 211, 77, 0.4))' }}
-          />
-          <div className="brand-text-grad mt-1 text-xl">TG SignPulse</div>
-          <p className="text-[#9496a1] text-[11px] mt-1 leading-relaxed px-4 font-medium">{t("settings_desc")}</p>
+    <div className="flex min-h-[100dvh] flex-col">
+      <header data-tone="neutral" className="field pt-safe">
+        <div className="page-body flex flex-col items-center pb-[72px] pt-14 text-center lg:pb-24 lg:pt-24">
+          <BrandMark size={60} className="rounded-[18px]" />
+          <h1 className="mt-4 text-[30px] font-bold leading-9 tracking-[-0.02em]">TG SignPulse</h1>
+          <p className="on-field-2 mt-1 text-[15px]">{t("login_tagline")}</p>
+          <div aria-hidden className="pulse mt-8 h-7 w-full max-w-[360px]">
+            {Array.from({ length: 30 }).map((_, index) => (
+              <i key={index} className={index < 3 ? "is-empty" : index === 29 ? "is-today" : undefined} />
+            ))}
+          </div>
         </div>
+      </header>
 
-        <form onSubmit={handleSubmit} className="text-left" autoComplete="off">
-          <div className="mb-4">
-            <label className="text-[11px] mb-1.5 block font-bold text-main/60 uppercase tracking-widest">{t("username")}</label>
-            <input
-              type="text"
-              name="username"
-              className="!py-3 !px-4 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 rounded-xl"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder={t("username")}
-              autoComplete="off"
-            />
-          </div>
-          <div className="mb-4">
-            <label className="text-[11px] mb-1.5 block font-bold text-main/60 uppercase tracking-widest">{t("password")}</label>
-            <input
-              type="password"
-              name="password"
-              className="!py-3 !px-4 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 rounded-xl"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={t("password")}
-              autoComplete="new-password"
-            />
-          </div>
-          <div className="mb-5">
-            <label className="text-[11px] mb-1.5 block font-bold text-main/60 uppercase tracking-widest">{t("totp")}</label>
-            <input
-              type="text"
-              name="totp"
-              className="!py-3 !px-4 text-center tracking-[4px] bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 rounded-xl font-bold"
-              value={totp}
-              onChange={(e) => setTotp(e.target.value)}
-              placeholder={t("totp_placeholder")}
-              autoComplete="off"
-            />
-          </div>
-
-          {errorMsg && (
-            <div className="text-[#ff4757] text-[11px] mb-5 text-center bg-[#ff4757]/10 p-2.5 rounded-xl font-medium border border-[#ff4757]/20">
-              {errorMsg}
-            </div>
-          )}
-
-          <button className="btn-gradient w-full !py-3.5 font-bold shadow-xl rounded-xl transition-all" type="submit" disabled={loading}>
-            {loading ? (
-              <div className="flex items-center justify-center gap-2">
-                <Spinner className="animate-spin" size={18} />
-                <span>{t("login_loading")}</span>
+      <main className="page-body relative z-[1] -mt-10 flex-1 pb-8">
+        <div className="mx-auto w-full max-w-[400px]">
+          <form onSubmit={handleSubmit} noValidate>
+            <div className="group-list shadow-lift">
+              <div className="list-row field-row">
+                <label htmlFor="login-username" className="sr-only">
+                  {t("username")}
+                </label>
+                <input
+                  id="login-username"
+                  name="username"
+                  className="field-input text-left"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder={t("username")}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
               </div>
-            ) : (
-              <span className="text-sm">{t("login")}</span>
-            )}
-          </button>
-        </form>
+              <div className="list-row field-row">
+                <label htmlFor="login-password" className="sr-only">
+                  {t("password")}
+                </label>
+                <input
+                  id="login-password"
+                  type="password"
+                  name="password"
+                  className="field-input text-left"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={t("password")}
+                  autoComplete="current-password"
+                />
+              </div>
+            </div>
 
-        <div className="login-footer-icons !mt-6 !pt-4 border-t border-black/5 dark:border-white/5 flex items-center justify-center gap-6">
+            <div className="group-list mt-3">
+              <div className="list-row field-row">
+                <label htmlFor="login-totp" className="text-body">
+                  {t("totp_short")}
+                </label>
+                <input
+                  id="login-totp"
+                  name="totp"
+                  className="field-input num tracking-[0.2em] placeholder:tracking-normal"
+                  value={totp}
+                  onChange={(e) => setTotp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder={t("totp_if_enabled")}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                />
+              </div>
+            </div>
+
+            <div className="min-h-[44px] px-4 pt-2.5" aria-live="polite">
+              {errorMsg ? (
+                <p role="alert" className="flex items-start gap-1.5 text-footnote text-danger">
+                  <WarningCircle size={16} weight="fill" className="mt-px flex-none" aria-hidden />
+                  {errorMsg}
+                </p>
+              ) : null}
+            </div>
+
+            <button className="btn btn-primary btn-lg w-full" type="submit" disabled={loading}>
+              {loading ? <Spinner className="text-white" /> : null}
+              {loading ? t("login_loading") : t("login")}
+            </button>
+          </form>
+        </div>
+      </main>
+
+      <footer className="flex items-center justify-center gap-4 pb-safe pt-2">
+        <div className="flex items-center gap-2 pb-4">
           <ThemeLanguageToggle />
           <a
             href="https://github.com/loochenx/TG-SignPulse"
             target="_blank"
             rel="noreferrer"
-            className="action-btn !w-9 !h-9 !text-xl"
+            className="icon-btn text-label-2"
+            aria-label={t("github_repo")}
             title={t("github_repo")}
           >
-            <GithubLogo weight="bold" />
+            <GithubLogo size={19} weight="bold" aria-hidden />
           </a>
         </div>
-      </div>
+      </footer>
     </div>
   );
 }

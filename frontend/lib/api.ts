@@ -754,3 +754,18 @@ export const getSignTaskHistory = (
     token
   );
 };
+
+export interface RecentRun {
+  time: string;
+  success: boolean;
+}
+
+export interface RecentRunsItem {
+  task_name: string;
+  account_name: string;
+  runs: RecentRun[];
+}
+
+/** 所有任务最近 N 天（含今天）的执行结果，首页状态条用 */
+export const getRecentRuns = (token: string, days: number = 30) =>
+  request<RecentRunsItem[]>(`/sign-tasks/history/recent?days=${days}`, {}, token);

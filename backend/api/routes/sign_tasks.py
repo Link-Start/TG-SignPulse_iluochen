@@ -204,6 +204,17 @@ class TaskHistoryItem(BaseModel):
     flow_line_count: int = 0
 
 
+class RecentRun(BaseModel):
+    time: str
+    success: bool
+
+
+class RecentRunsItem(BaseModel):
+    task_name: str
+    account_name: str = ""
+    runs: list[RecentRun] = Field(default_factory=list)
+
+
 # API 路由
 
 
@@ -234,6 +245,15 @@ def list_sign_tasks(
     tasks = get_sign_task_service().list_tasks(account_name=account_name)
     _inject_next_run_times(tasks)
     return tasks
+
+
+@router.get("/history/recent", response_model=list[RecentRunsItem])
+def get_recent_sign_task_runs(
+    days: int = Query(30, ge=1, le=90),
+    current_user=Depends(get_current_user),
+):
+    """批量获取所有任务最近 N 天的执行结果（用于状态条）"""
+    return get_sign_task_service().get_recent_runs(days=days)
 
 
 @router.post("", response_model=SignTaskOut, status_code=status.HTTP_201_CREATED)

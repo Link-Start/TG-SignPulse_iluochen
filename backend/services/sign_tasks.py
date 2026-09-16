@@ -167,6 +167,8 @@ class SignTaskService:
             set()
         )  # 持有后台协程强引用，防止被 GC
         self._tasks_cache = None  # 内存缓存
+        # 历史文件 -> ((mtime_ns, size), [{time, success}])，状态条轮询时免于重复解析 flow_logs
+        self._run_summary_cache: dict[str, tuple[tuple[int, int], list[dict]]] = {}
         # 历史文件与 config.json 的 last_run 是「读-改-写」，同步路由在线程池中执行，
         # 与事件循环中的任务收尾并发时需要加锁，避免互相覆盖丢记录
         self._history_lock = threading.RLock()
@@ -420,6 +422,60 @@ class SignTaskService:
 
         entries.sort(key=lambda x: x.get("time", ""), reverse=True)
         return entries
+
+    def _load_run_summaries(
+        self, task_name: str, account_name: str = ""
+    ) -> list[dict[str, Any]]:
+        history_file = self._history_file_path(task_name, account_name)
+        if not history_file.exists():
+            history_file = (
+                self.run_history_dir / f"{self._safe_history_key(task_name)}.json"
+            )
+        try:
+            stat = history_file.stat()
+        except OSError:
+            return []
+
+        cache_key = str(history_file)
+        signature = (stat.st_mtime_ns, stat.st_size)
+        cached = self._run_summary_cache.get(cache_key)
+        if cached and cached[0] == signature:
+            return cached[1]
+
+        runs = [
+            {"time": item["time"], "success": bool(item.get("success", False))}
+            for item in self._load_history_entries(task_name, account_name)
+            if isinstance(item.get("time"), str) and item["time"]
+        ]
+        self._run_summary_cache[cache_key] = (signature, runs)
+        return runs
+
+    def get_recent_runs(self, days: int = 30) -> list[dict[str, Any]]:
+        """批量返回所有任务最近 N 天（含今天）的执行结果，只含时间与成败"""
+        from datetime import datetime, time, timedelta
+
+        days = min(max(days, 1), 90)
+        today = datetime.now().date()
+        cutoff = datetime.combine(today - timedelta(days=days - 1), time.min)
+
+        result: list[dict[str, Any]] = []
+        for task in self.list_tasks():
+            task_name = task["name"]
+            account_name = task.get("account_name", "")
+            runs = []
+            for run in self._load_run_summaries(task_name, account_name):
+                try:
+                    run_at = datetime.fromisoformat(run["time"])
+                except ValueError:
+                    continue
+                if run_at.tzinfo is not None:
+                    run_at = run_at.astimezone().replace(tzinfo=None)
+                if run_at >= cutoff:
+                    runs.append(run)
+            result.append(
+                {"task_name": task_name, "account_name": account_name, "runs": runs}
+            )
+        return result
 
     def get_task_history_logs(
         self, task_name: str, account_name: str, limit: int = 20

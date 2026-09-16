@@ -1,211 +1,207 @@
 "use client";
 
-import { useState } from "react";
-import { Robot as BotIcon, Spinner } from "@phosphor-icons/react";
+import { useEffect, useState } from "react";
 import { GlobalSettings, testTelegramBotNotification } from "../../../lib/api";
 import { getToken } from "../../../lib/auth";
+import { cn } from "../../../lib/utils";
+import { Sheet } from "../../../components/ui/sheet";
+import { Spinner, Switch } from "../../../components/ui/controls";
+import { FieldRow, ListSection, RowInput } from "../../../components/ui/list";
 
-type Props = {
-    settings: GlobalSettings;
-    setSettings: (settings: GlobalSettings) => void;
-    loading: boolean;
-    onSave: () => void;
-    t: (key: string) => string;
-};
+type T = (key: string) => string;
 
-function Toggle({
-    checked,
-    onChange,
-    label,
+function SwitchRow({
+  title,
+  description,
+  checked,
+  disabled,
+  onChange,
 }: {
-    checked: boolean;
-    onChange: () => void;
-    label: string;
+  title: string;
+  description?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (next: boolean) => void;
 }) {
-    return (
-        <button
-            type="button"
-            className={`w-12 h-7 rounded-full relative transition-all shadow-sm border-2 ${checked ? "bg-[#8a3ffc] border-[#8a3ffc]" : "bg-black/20 dark:bg-white/10 border-black/10 dark:border-white/30"}`}
-            onClick={onChange}
-            aria-label={label}
-        >
-            <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all shadow-md ${checked ? "left-6" : "left-0.5"}`} />
-        </button>
-    );
+  return (
+    <div className={cn("list-row", disabled && "opacity-50")}>
+      <span className="min-w-0 flex-1">
+        <span className="block text-body">{title}</span>
+        {description ? <span className="mt-0.5 block text-footnote text-label-2">{description}</span> : null}
+      </span>
+      <Switch checked={checked} label={title} disabled={disabled} onChange={onChange} />
+    </div>
+  );
 }
 
-export function TelegramBotNotificationSettings({
-    settings,
-    setSettings,
-    loading,
-    onSave,
-    t,
-}: Props) {
-    const [testing, setTesting] = useState(false);
-    const [testResult, setTestResult] = useState<string | null>(null);
-    const [testStatus, setTestStatus] = useState<"success" | "error" | null>(null);
+/** Telegram Bot 通知：开关、Bot 配置、通知类型与测试发送 */
+export function TelegramBotNotificationSheet({
+  open,
+  settings,
+  saving,
+  t,
+  onClose,
+  onSave,
+}: {
+  open: boolean;
+  settings: GlobalSettings;
+  saving: boolean;
+  t: T;
+  onClose: () => void;
+  onSave: (patch: GlobalSettings) => void;
+}) {
+  const [draft, setDraft] = useState<GlobalSettings>(settings);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-    const handleTest = async () => {
-        if (!settings.telegram_bot_token || !settings.telegram_bot_chat_id) {
-            setTestStatus("error");
-            setTestResult("Bot Token 和 Chat ID 不能为空");
-            return;
-        }
-        
-        const tokenStr = getToken();
-        if (!tokenStr) return;
+  useEffect(() => {
+    if (open) {
+      setDraft(settings);
+      setTestResult(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
-        try {
-            setTesting(true);
-            setTestResult(null);
-            setTestStatus(null);
-            
-            const res = await testTelegramBotNotification(tokenStr, {
-                bot_token: settings.telegram_bot_token,
-                chat_id: settings.telegram_bot_chat_id,
-                message_thread_id: settings.telegram_bot_message_thread_id,
-            });
-            
-            if (res.success) {
-                setTestStatus("success");
-                setTestResult(res.message);
-            } else {
-                setTestStatus("error");
-                setTestResult(res.message);
-            }
-        } catch (err: any) {
-            setTestStatus("error");
-            setTestResult(err.message || String(err));
-        } finally {
-            setTesting(false);
-        }
-    };
+  const patch = (values: Partial<GlobalSettings>) => setDraft((prev) => ({ ...prev, ...values }));
+  const enabled = Boolean(draft.telegram_bot_notify_enabled);
 
-    return (
-        <div className="glass-panel p-4">
-            <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 bg-cyan-500/10 rounded-xl text-cyan-400">
-                    <BotIcon weight="bold" size={18} />
-                </div>
-                <h2 className="text-lg font-bold">{t("telegram_bot_notify")}</h2>
-            </div>
+  const handleTest = async () => {
+    if (!draft.telegram_bot_token || !draft.telegram_bot_chat_id) {
+      setTestResult({ ok: false, message: t("telegram_bot_test_required") });
+      return;
+    }
+    const tokenStr = getToken();
+    if (!tokenStr) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await testTelegramBotNotification(tokenStr, {
+        bot_token: draft.telegram_bot_token,
+        chat_id: draft.telegram_bot_chat_id,
+        message_thread_id: draft.telegram_bot_message_thread_id,
+      });
+      setTestResult({ ok: res.success, message: res.message });
+    } catch (err: any) {
+      setTestResult({ ok: false, message: err?.message || String(err) });
+    } finally {
+      setTesting(false);
+    }
+  };
 
-            <div className="space-y-4">
-                <div className="rounded-xl border border-white/5 bg-white/3 p-3 flex items-center justify-between gap-3">
-                    <div>
-                        <label className="text-[11px] mb-1">{t("telegram_bot_master_switch")}</label>
-                        <p className="text-[9px] text-[#9496a1]">{t("telegram_bot_notify_desc")}</p>
-                    </div>
-                    <Toggle
-                        checked={Boolean(settings.telegram_bot_notify_enabled)}
-                        label={t("telegram_bot_master_switch")}
-                        onChange={() => setSettings({
-                            ...settings,
-                            telegram_bot_notify_enabled: !settings.telegram_bot_notify_enabled,
-                        })}
-                    />
-                </div>
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title={t("telegram_bot_notify")}
+      size="md"
+      tall
+      footer={
+        <button
+          type="button"
+          className="btn btn-primary btn-lg w-full"
+          disabled={saving}
+          onClick={() => onSave({
+            telegram_bot_notify_enabled: draft.telegram_bot_notify_enabled,
+            telegram_bot_login_notify_enabled: draft.telegram_bot_login_notify_enabled,
+            telegram_bot_task_failure_enabled: draft.telegram_bot_task_failure_enabled,
+            telegram_bot_task_success_enabled: draft.telegram_bot_task_success_enabled,
+            telegram_bot_token: draft.telegram_bot_token,
+            telegram_bot_chat_id: draft.telegram_bot_chat_id,
+            telegram_bot_message_thread_id: draft.telegram_bot_message_thread_id,
+          })}
+        >
+          {saving ? <Spinner className="text-white" /> : null}
+          {t("save")}
+        </button>
+      }
+    >
+      <div className="space-y-6 pt-1">
+        <ListSection footer={t("telegram_bot_notify_desc")}>
+          <SwitchRow
+            title={t("telegram_bot_master_switch")}
+            checked={enabled}
+            onChange={(next) => patch({ telegram_bot_notify_enabled: next })}
+          />
+        </ListSection>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                        <label className="text-[11px] mb-1">{t("telegram_bot_token")}</label>
-                        <input
-                            type="password"
-                            className="!py-2 !px-4"
-                            value={settings.telegram_bot_token || ""}
-                            onChange={(e) => setSettings({ ...settings, telegram_bot_token: e.target.value || null })}
-                            placeholder={t("telegram_bot_token_placeholder")}
-                        />
-                    </div>
-                    <div>
-                        <label className="text-[11px] mb-1">{t("telegram_bot_chat_id")}</label>
-                        <input
-                            className="!py-2 !px-4"
-                            value={settings.telegram_bot_chat_id || ""}
-                            onChange={(e) => setSettings({ ...settings, telegram_bot_chat_id: e.target.value || null })}
-                            placeholder={t("telegram_bot_chat_id_placeholder")}
-                        />
-                    </div>
-                    <div>
-                        <label className="text-[11px] mb-1">{t("telegram_bot_thread_id")}</label>
-                        <input
-                            inputMode="numeric"
-                            className="!py-2 !px-4"
-                            value={settings.telegram_bot_message_thread_id ?? ""}
-                            onChange={(e) => setSettings({
-                                ...settings,
-                                telegram_bot_message_thread_id: e.target.value ? parseInt(e.target.value) : null,
-                            })}
-                            placeholder={t("telegram_bot_thread_id_placeholder")}
-                        />
-                    </div>
-                </div>
+        <ListSection header={t("telegram_bot_section_bot")}>
+          <FieldRow label={t("telegram_bot_token_short")} htmlFor="bot-token">
+            <RowInput
+              id="bot-token"
+              type="password"
+              autoComplete="off"
+              className="mono"
+              value={draft.telegram_bot_token || ""}
+              onChange={(e) => patch({ telegram_bot_token: e.target.value || null })}
+              placeholder={t("telegram_bot_token_placeholder")}
+            />
+          </FieldRow>
+          <FieldRow label={t("telegram_bot_chat_id_short")} htmlFor="bot-chat">
+            <RowInput
+              id="bot-chat"
+              inputMode="numeric"
+              className="mono"
+              value={draft.telegram_bot_chat_id || ""}
+              onChange={(e) => patch({ telegram_bot_chat_id: e.target.value || null })}
+              placeholder={t("telegram_bot_chat_id_placeholder")}
+            />
+          </FieldRow>
+          <FieldRow label={t("topic_id_short")} htmlFor="bot-thread">
+            <RowInput
+              id="bot-thread"
+              inputMode="numeric"
+              className="mono"
+              value={draft.telegram_bot_message_thread_id ?? ""}
+              onChange={(e) => {
+                const value = e.target.value.replace(/[^\d]/g, "");
+                patch({ telegram_bot_message_thread_id: value ? parseInt(value, 10) : null });
+              }}
+              placeholder={t("optional")}
+            />
+          </FieldRow>
+          <div className="list-row py-2">
+            <button type="button" className="btn btn-sm btn-tinted" onClick={handleTest} disabled={testing}>
+              {testing ? <Spinner className="h-3.5 w-3.5 border-[1.5px]" /> : null}
+              {t("telegram_bot_send_test")}
+            </button>
+            {testResult ? (
+              <span
+                role="status"
+                className={cn("min-w-0 flex-1 text-footnote", testResult.ok ? "text-success" : "text-danger")}
+              >
+                {testResult.message}
+              </span>
+            ) : null}
+          </div>
+        </ListSection>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="rounded-xl border border-white/5 bg-black/5 p-3 flex items-center justify-between gap-3">
-                        <div>
-                            <label className="text-[11px] mb-1">{t("telegram_login_notify")}</label>
-                            <p className="text-[9px] text-[#9496a1]">{t("telegram_login_notify_desc")}</p>
-                        </div>
-                        <Toggle
-                            checked={Boolean(settings.telegram_bot_login_notify_enabled)}
-                            label={t("telegram_login_notify")}
-                            onChange={() => setSettings({
-                                ...settings,
-                                telegram_bot_login_notify_enabled: !settings.telegram_bot_login_notify_enabled,
-                            })}
-                        />
-                    </div>
-
-                    <div className="rounded-xl border border-white/5 bg-black/5 p-3 flex items-center justify-between gap-3">
-                        <div>
-                            <label className="text-[11px] mb-1">{t("telegram_task_failure_notify")}</label>
-                            <p className="text-[9px] text-[#9496a1]">{t("telegram_task_failure_notify_desc")}</p>
-                        </div>
-                        <Toggle
-                            checked={settings.telegram_bot_task_failure_enabled !== false}
-                            label={t("telegram_task_failure_notify")}
-                            onChange={() => setSettings({
-                                ...settings,
-                                telegram_bot_task_failure_enabled: !(settings.telegram_bot_task_failure_enabled !== false),
-                            })}
-                        />
-                    </div>
-
-                    <div className="rounded-xl border border-white/5 bg-black/5 p-3 flex items-center justify-between gap-3">
-                        <div>
-                            <label className="text-[11px] mb-1">{t("telegram_task_success_notify")}</label>
-                            <p className="text-[9px] text-[#9496a1]">{t("telegram_task_success_notify_desc")}</p>
-                        </div>
-                        <Toggle
-                            checked={Boolean(settings.telegram_bot_task_success_enabled)}
-                            label={t("telegram_task_success_notify")}
-                            onChange={() => setSettings({
-                                ...settings,
-                                telegram_bot_task_success_enabled: !settings.telegram_bot_task_success_enabled,
-                            })}
-                        />
-                    </div>
-                </div>
-
-                <div className="flex gap-3">
-                    <button className="btn-gradient w-fit whitespace-nowrap px-5 !py-2 !text-[11px]" onClick={onSave} disabled={loading || testing}>
-                        {loading ? <Spinner className="animate-spin" /> : t("save")}
-                    </button>
-                    <button className="btn-secondary w-fit whitespace-nowrap px-5 !py-2 !text-[11px]" onClick={handleTest} disabled={testing || loading}>
-                        {testing ? <Spinner className="animate-spin" /> : t("test_connection")}
-                    </button>
-                </div>
-
-                {testResult && (
-                    <div className={`p-3 rounded-xl text-[11px] border ${testStatus === "success" ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'} animate-float-up`}>
-                        <div className="flex items-center gap-2 font-bold mb-0.5 uppercase tracking-wider text-[9px]">
-                            {testStatus === "success" ? t("process_successful") : t("process_error")}
-                        </div>
-                        {testResult}
-                    </div>
-                )}
-            </div>
-        </div>
-    );
+        <ListSection
+          header={t("telegram_bot_section_events")}
+          footer={enabled ? undefined : t("telegram_bot_events_off_hint")}
+        >
+          <SwitchRow
+            title={t("telegram_login_notify")}
+            description={t("telegram_login_notify_desc")}
+            checked={Boolean(draft.telegram_bot_login_notify_enabled)}
+            disabled={!enabled}
+            onChange={(next) => patch({ telegram_bot_login_notify_enabled: next })}
+          />
+          <SwitchRow
+            title={t("telegram_task_failure_notify")}
+            description={t("telegram_task_failure_notify_desc")}
+            checked={draft.telegram_bot_task_failure_enabled !== false}
+            disabled={!enabled}
+            onChange={(next) => patch({ telegram_bot_task_failure_enabled: next })}
+          />
+          <SwitchRow
+            title={t("telegram_task_success_notify")}
+            description={t("telegram_task_success_notify_desc")}
+            checked={Boolean(draft.telegram_bot_task_success_enabled)}
+            disabled={!enabled}
+            onChange={(next) => patch({ telegram_bot_task_success_enabled: next })}
+          />
+        </ListSection>
+      </div>
+    </Sheet>
+  );
 }
