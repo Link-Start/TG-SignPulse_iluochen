@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 import os
+import secrets
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -12,17 +15,38 @@ except ImportError:
     from pydantic import BaseSettings
 
 
-# 生成或获取持久化的密钥
-def get_default_secret_key() -> str:
-    """获取默认密钥，优先使用环境变量，否则使用固定默认值"""
-    # 如果设置了环境变量，使用环境变量
-    env_secret = os.getenv("APP_SECRET_KEY")
-    if env_secret and env_secret.strip():
-        return env_secret.strip()
+SECRET_KEY_FILENAME = ".secret_key"
 
-    # 否则使用固定的默认值（生产环境应该设置环境变量）
-    # 这个默认值确保应用能启动，但不够安全
-    return "tg-signer-default-secret-key-please-change-in-production-2024"
+logger = logging.getLogger("backend.config")
+
+
+def load_or_create_secret_key(base_dir: Path) -> str:
+    """未设置 APP_SECRET_KEY 时，在数据目录生成随机密钥并持久化（权限 0600）"""
+    path = base_dir / SECRET_KEY_FILENAME
+    try:
+        existing = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        existing = ""
+    if existing:
+        return existing
+
+    key = secrets.token_urlsafe(48)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".secret_key.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fp:
+            fp.write(key)
+        # link 不覆盖已有文件：多个进程同时启动时只有一个写入成功，其余读取它的值
+        os.link(tmp, path)
+    except FileExistsError:
+        return path.read_text(encoding="utf-8").strip()
+    finally:
+        os.unlink(tmp)
+    logger.warning(
+        "APP_SECRET_KEY 未设置，已生成随机密钥并保存到 %s；删除该文件会使所有登录失效",
+        path,
+    )
+    return key
 
 
 class Settings(BaseSettings):
@@ -30,8 +54,8 @@ class Settings(BaseSettings):
     host: str = os.getenv("APP_HOST", "127.0.0.1")
     port: int = 3000
 
-    # 使用函数获取默认密钥
-    secret_key: str = get_default_secret_key()
+    # 留空时由 get_settings() 从数据目录读取或生成
+    secret_key: str = ""
     access_token_expire_hours: int = 12
 
     timezone: str = os.getenv("TZ", "Asia/Hong_Kong")
@@ -70,4 +94,10 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    settings.secret_key = settings.secret_key.strip()
+    if not settings.secret_key:
+        settings.secret_key = load_or_create_secret_key(settings.resolve_base_dir())
+    elif len(settings.secret_key) < 16:
+        logger.warning("APP_SECRET_KEY 过短（少于 16 个字符），建议换成随机长字符串")
+    return settings

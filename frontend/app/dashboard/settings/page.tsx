@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getToken } from "../../../lib/auth";
+import { getMustChangePassword, getToken, setMustChangePassword } from "../../../lib/auth";
 import {
     changePassword,
     changeUsername,
@@ -58,6 +58,7 @@ export default function SettingsPage() {
     const [token, setLocalToken] = useState<string | null>(null);
     const [userLoading, setUserLoading] = useState(false);
     const [pwdLoading, setPwdLoading] = useState(false);
+    const [mustChangePassword, setMustChangePasswordState] = useState(false);
     const [totpLoading, setTotpLoading] = useState(false);
     const [configLoading, setConfigLoading] = useState(false);
     const [telegramLoading, setTelegramLoading] = useState(false);
@@ -133,6 +134,7 @@ export default function SettingsPage() {
             return;
         }
         setLocalToken(tokenStr);
+        setMustChangePasswordState(getMustChangePassword());
         setChecking(false);
         loadTOTPStatus(tokenStr);
         loadAIConfig(tokenStr);
@@ -218,6 +220,8 @@ export default function SettingsPage() {
             setPwdLoading(true);
             await changePassword(token, passwordForm.oldPassword, passwordForm.newPassword);
             addToast(t("password_changed"), "success");
+            setMustChangePassword(false);
+            setMustChangePasswordState(false);
             setPasswordForm({ oldPassword: "", newPassword: "", confirmPassword: "" });
         } catch (err: any) {
             addToast(formatErrorMessage("change_failed", err), "error");
@@ -511,6 +515,13 @@ export default function SettingsPage() {
                             </div>
                             <h2 className="text-lg font-bold">{t("change_password")}</h2>
                         </div>
+
+                        {mustChangePassword && (
+                            <div role="alert" className="flex items-start gap-2 mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-bold">
+                                <WarningCircle weight="bold" size={16} className="shrink-0 mt-px" />
+                                {t("default_password_warning")}
+                            </div>
+                        )}
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
                             <div>

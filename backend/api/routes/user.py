@@ -18,6 +18,7 @@ from backend.core.auth import get_current_user, get_current_user_optional
 from backend.core.database import get_db
 from backend.core.security import hash_password, verify_password
 from backend.models.user import User
+from backend.services.users import DEFAULT_ADMIN_PASSWORD
 
 router = APIRouter()
 
@@ -111,6 +112,11 @@ def change_password(
     if len(request.new_password) < 6:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="新密码长度至少为 6 个字符"
+        )
+
+    if request.new_password == DEFAULT_ADMIN_PASSWORD:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="新密码不能使用默认密码"
         )
 
     # 更新密码
@@ -346,24 +352,3 @@ def disable_totp(
     db.commit()
 
     return DisableTOTPResponse(success=True, message="两步验证已禁用")
-
-
-@router.post("/totp/reset", response_model=DisableTOTPResponse)
-def reset_totp(
-    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
-):
-    """
-    强制重置 TOTP（不需要验证码）
-
-    用于解决用户无法登录的问题
-    注意：此接口只有在用户已登录时才能调用
-    """
-    # 清除数据库中的 TOTP secret
-    current_user.totp_secret = None
-    db.commit()
-
-    # 清除待验证的 secret
-    if current_user.id in _pending_totp_secrets:
-        del _pending_totp_secrets[current_user.id]
-
-    return DisableTOTPResponse(success=True, message="两步验证已重置")

@@ -5,10 +5,17 @@ import os
 
 from sqlalchemy.orm import Session
 
-from backend.core.security import hash_password
+from backend.core.security import hash_password, verify_password
 from backend.models.user import User
 
 logger = logging.getLogger("backend.users")
+
+DEFAULT_ADMIN_PASSWORD = "admin123"
+
+
+def is_default_password(user: User) -> bool:
+    """仍在使用内置默认密码时需要提示用户修改"""
+    return verify_password(DEFAULT_ADMIN_PASSWORD, user.password_hash)
 
 
 def ensure_admin(db: Session, username: str = "admin", password: str | None = None):
@@ -26,7 +33,7 @@ def ensure_admin(db: Session, username: str = "admin", password: str | None = No
         if env_pwd:
             password = env_pwd
         else:
-            password = "admin123"
+            password = DEFAULT_ADMIN_PASSWORD
             logger.warning(
                 "SECURITY WARNING: Default admin account created with hardcoded password 'admin123'. "
                 "Please change it immediately or set ADMIN_PASSWORD environment variable."

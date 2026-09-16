@@ -117,12 +117,6 @@ export const login = (payload: {
 export const getMe = (token: string) =>
   request("/auth/me", {}, token);
 
-export const resetTOTP = (payload: { username: string; password: string }) =>
-  request<{ success: boolean; message: string }>("/auth/reset-totp", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-
 
 // ============ 账号管理（重构版）============
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from backend.models.task import Task
 from backend.models.task_log import TaskLog
 
 settings = get_settings()
+logger = logging.getLogger("backend.tasks")
 
 # 用于实时日志推送的状态跟踪
 _active_tasks: dict[int, bool] = {}
@@ -173,9 +175,15 @@ async def run_task_once(db: Session, task: Task) -> TaskLog:
     except Exception as e:
         msg = f"Error running task: {e}"
         _active_logs[task.id].append(msg)
+        task_log.finished_at = datetime.utcnow()
         task_log.status = "failed"
         task_log.output = msg[-1000:]
-        db.commit()
+        task.last_run_at = task_log.finished_at
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to record task failure: task_id=%s", task.id)
     finally:
         _active_tasks[task.id] = False
 

@@ -1881,7 +1881,7 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
 
     # 预编译正则：匹配 Bot 超时/取消提示，避免热路径内重复编译
     _BOT_ERROR_PATTERN = re.compile(
-        "|".join(["没有获取到您的输入", "会话状态自动取消", r"session.*cancel", "超时"]),
+        r"没有获取到您的输入|会话状态自动取消|session.*cancel|超时",
         re.IGNORECASE,
     )
 

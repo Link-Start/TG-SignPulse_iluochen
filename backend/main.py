@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
 from pathlib import Path
 
@@ -78,15 +79,19 @@ app.state.ready = False
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 面板与 API 同源部署，默认不开放跨域；需要时用 APP_CORS_ORIGINS 配置逗号分隔的白名单
+_cors_origins = [
+    origin.strip()
+    for origin in os.getenv("APP_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # API 路由必须在静态文件挂载之前注册，并使用 /api 前缀
 app.include_router(api_router, prefix="/api")
@@ -104,8 +109,6 @@ def health_checkz() -> dict[str, str]:
 
 @app.get("/api/version")
 def get_version() -> dict[str, str]:
-    import os
-
     from tg_signer import __version__
 
     # BUILD_DATE and BUILD_SHA are injected at Docker build time via ARG→ENV.

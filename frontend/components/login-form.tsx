@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { login } from "../lib/api";
-import { setToken } from "../lib/auth";
+import { setMustChangePassword, setToken } from "../lib/auth";
 import {
   Lightning,
   Spinner,
@@ -29,7 +29,8 @@ export default function LoginForm() {
     try {
       const res = await login({ username, password, totp_code: totp || undefined });
       setToken(res.access_token);
-      router.push("/dashboard");
+      setMustChangePassword(Boolean(res.must_change_password));
+      router.push(res.must_change_password ? "/dashboard/settings" : "/dashboard");
     } catch (err: any) {
       const msg = err?.message || "";
       let displayMsg = t("login_failed");

@@ -14,8 +14,9 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
+from backend.api.routes.sign_tasks import WS_CLOSE_UNAUTHORIZED
 from backend.core.auth import get_current_user, verify_token
-from backend.core.database import get_db
+from backend.core.database import get_db, get_session_local
 from backend.models.account import Account
 from backend.models.task_log import TaskLog
 from backend.scheduler import sync_jobs
@@ -135,19 +136,20 @@ async def task_logs_ws(
     websocket: WebSocket,
     task_id: int,
     token: str = Query(...),
-    db: Session = Depends(get_db),
 ):
     """
     WebSocket 实时推送数据库任务日志
     """
-    # 验证 Token
+    # 鉴权用短生命周期会话，不在长连接期间占用数据库连接
     try:
-        user = verify_token(token, db)
-        if not user:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
+        with get_session_local()() as db:
+            user = verify_token(token, db)
     except Exception:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        user = None
+    if not user:
+        # 与签到任务一致：accept 后以 4401 关闭，前端据此识别登录失效
+        await websocket.accept()
+        await websocket.close(code=WS_CLOSE_UNAUTHORIZED)
         return
 
     await websocket.accept()
