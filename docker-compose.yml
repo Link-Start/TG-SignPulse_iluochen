@@ -9,6 +9,8 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data
+      # 可选：开启面板内一键更新（面板将获得管理本机 Docker 的权限，详见 README「页面内更新」）
+      # - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - .env
     environment:

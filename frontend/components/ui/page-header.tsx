@@ -9,6 +9,7 @@ import { cn } from "../../lib/utils";
 import { useLanguage } from "../../context/LanguageContext";
 import { useAccountAlerts } from "../app/DashboardData";
 import { useNavTabs } from "../app/nav";
+import { useSelfUpdate } from "../app/SelfUpdate";
 import { BrandMark } from "./brand";
 
 const BAR_HEIGHT = 64;
@@ -36,6 +37,7 @@ function DesktopTabs() {
   const pathname = usePathname() || "/dashboard";
   const tabs = useNavTabs(pathname);
   const alerts = useAccountAlerts();
+  const { updateAvailable } = useSelfUpdate();
   return (
     <nav aria-label={t("main_navigation")} className="hidden items-center gap-1 lg:flex">
       {tabs.map((tab) => {
@@ -47,6 +49,11 @@ function DesktopTabs() {
             {tab.key === "accounts" && alerts > 0 ? (
               <span className="field-count num" aria-label={`${alerts}`}>
                 {alerts}
+              </span>
+            ) : null}
+            {tab.key === "settings" && updateAvailable ? (
+              <span className="field-dot">
+                <span className="sr-only">{t("update_available_short")}</span>
               </span>
             ) : null}
           </Link>

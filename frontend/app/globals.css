@@ -409,6 +409,18 @@
     color: #fff;
   }
 
+  /* 设置 Tab 上的「有新版本」提示 */
+  .field-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  .field-tab[aria-current="page"] .field-dot {
+    background: var(--accent);
+  }
+
   .field-headline {
     font-weight: 700;
     letter-spacing: -0.02em;

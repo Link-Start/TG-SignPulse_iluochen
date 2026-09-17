@@ -1779,6 +1779,9 @@ class SignTaskService:
             if running
         )
 
+    def has_running_tasks(self) -> bool:
+        return any(self._active_tasks.values())
+
     async def run_task_with_logs(
         self, account_name: str, task_name: str
     ) -> dict[str, Any]:

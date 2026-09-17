@@ -739,6 +739,54 @@ export interface SignTaskHistoryItem {
 export const getVersion = () =>
   fetch("/api/version").then((r) => r.json() as Promise<{ version: string; built_at: string }>);
 
+// ============ 软件更新 ============
+
+export type UpdateBlockReason =
+  | "disabled"
+  | "no_socket"
+  | "permission"
+  | "unreachable"
+  | "not_container"
+  | "pinned"
+  /** 镜像仓库里拉不到当前镜像（本地构建或私有镜像） */
+  | "not_pullable";
+
+export type UpdateJobState = "idle" | "pulling" | "restarting" | "up_to_date" | "failed";
+
+export interface UpdateStatus {
+  current: { version: string; build_sha: string; built_at: string };
+  check_enabled: boolean;
+  latest_version: string | null;
+  /** null：无法判断 */
+  update_available: boolean | null;
+  /** 本地构建的镜像，一键更新会改用镜像仓库里的版本 */
+  local_build: boolean;
+  checked_at: string | null;
+  check_error: string | null;
+  changes_url: string;
+  docker: { enabled: boolean; reason: UpdateBlockReason | null; image: string | null; container: string | null };
+  job: {
+    state: UpdateJobState;
+    message: string | null;
+    /** not_pullable：镜像仓库拒绝拉取 */
+    code?: string | null;
+    started_at?: string;
+    finished_at?: string;
+  };
+  /** 上一次更新助手的结果（面板重启后读取） */
+  last_result: { ok: boolean; finished_at: string | null; message: string | null; log: string[] } | null;
+}
+
+export const getUpdateStatus = (token: string, options: { refresh?: boolean; timeoutMs?: number } = {}) =>
+  request<UpdateStatus>(
+    `/update/status${options.refresh ? "?refresh=true" : ""}`,
+    { timeoutMs: options.timeoutMs },
+    token
+  );
+
+export const applyUpdate = (token: string) =>
+  request<UpdateStatus["job"]>("/update/apply", { method: "POST", timeoutMs: 30_000 }, token);
+
 export const getSignTaskHistory = (
   token: string,
   name: string,

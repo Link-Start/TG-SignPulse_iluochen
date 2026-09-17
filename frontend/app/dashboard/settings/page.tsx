@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ArrowSquareOut,
+  ArrowsClockwise,
   Bell,
   CloudArrowDown,
   Cpu,
@@ -51,6 +52,7 @@ import { ListRow, ListSection } from "../../../components/ui/list";
 import { cn } from "../../../lib/utils";
 import { BrandMark } from "../../../components/ui/brand";
 import { TelegramBotNotificationSheet } from "./TelegramBotNotificationSettings";
+import { UpdateRowValue, UpdateSheet } from "./UpdateSheet";
 import {
   AIForm,
   AISheet,
@@ -64,7 +66,7 @@ import {
 
 const GITHUB_URL = "https://github.com/loochenx/TG-SignPulse";
 
-type SheetKey = "username" | "password" | "totp" | "ai" | "bot" | "global" | "telegram" | "backup" | null;
+type SheetKey = "username" | "password" | "totp" | "ai" | "bot" | "global" | "telegram" | "backup" | "update" | null;
 
 /** iOS 设置风格的方块图标；绿、红、琥珀只留给状态，这里只用品牌蓝和中性灰 */
 function RowIcon({ icon: IconComponent, tone = "accent" }: { icon: Icon; tone?: "accent" | "gray" }) {
@@ -530,6 +532,13 @@ export default function SettingsPage() {
               value={versionInfo ? <span className="num">v{versionInfo.version}</span> : undefined}
             />
             <ListRow
+              icon={<RowIcon icon={ArrowsClockwise} />}
+              title={t("software_update")}
+              value={<UpdateRowValue t={t} />}
+              chevron
+              onClick={() => setSheet("update")}
+            />
+            <ListRow
               icon={<RowIcon icon={GithubLogo} tone="gray" />}
               title={t("github_repo")}
               href={GITHUB_URL}
@@ -611,6 +620,7 @@ export default function SettingsPage() {
         onSave={handleSaveTelegram}
         onReset={handleResetTelegram}
       />
+      <UpdateSheet open={sheet === "update"} t={t} language={language} onClose={closeSheet} />
       <BackupSheet
         open={sheet === "backup"}
         busy={busy}

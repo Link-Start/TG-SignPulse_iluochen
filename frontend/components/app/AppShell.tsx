@@ -8,11 +8,13 @@ import { cn } from "../../lib/utils";
 import { useLanguage } from "../../context/LanguageContext";
 import { DashboardDataProvider, useAccountAlerts } from "./DashboardData";
 import { useNavTabs } from "./nav";
+import { SelfUpdateProvider, useSelfUpdate } from "./SelfUpdate";
 
 function TabBar() {
   const { t } = useLanguage();
   const tabs = useNavTabs(usePathname() || "/dashboard");
   const alerts = useAccountAlerts();
+  const { updateAvailable } = useSelfUpdate();
   return (
     <nav aria-label={t("main_navigation")} className="material hairline-top fixed inset-x-0 bottom-0 z-40 pb-safe lg:hidden">
       <div className="mx-auto grid h-[var(--tabbar-h)] max-w-[560px] grid-cols-3 px-safe">
@@ -33,6 +35,11 @@ function TabBar() {
                 {tab.key === "accounts" && alerts > 0 ? (
                   <span className="num absolute -right-3 -top-1 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-down px-[5px] text-[11px] font-bold leading-none text-white ring-2 ring-[var(--surface)]">
                     {alerts}
+                  </span>
+                ) : null}
+                {tab.key === "settings" && updateAvailable ? (
+                  <span className="absolute -right-0.5 top-0 h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-[var(--surface)]">
+                    <span className="sr-only">{t("update_available_short")}</span>
                   </span>
                 ) : null}
               </span>
@@ -64,12 +71,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <DashboardDataProvider>
-      <div className="min-h-[100dvh]">
-        <main className={cn("w-full lg:pb-20", isSubPage ? "pb-6" : "pb-[calc(var(--tabbar-h)+var(--safe-b)+28px)]")}>
-          {children}
-        </main>
-        {!isSubPage && <TabBar />}
-      </div>
+      <SelfUpdateProvider>
+        <div className="min-h-[100dvh]">
+          <main className={cn("w-full lg:pb-20", isSubPage ? "pb-6" : "pb-[calc(var(--tabbar-h)+var(--safe-b)+28px)]")}>
+            {children}
+          </main>
+          {!isSubPage && <TabBar />}
+        </div>
+      </SelfUpdateProvider>
     </DashboardDataProvider>
   );
 }

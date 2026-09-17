@@ -113,6 +113,12 @@ touch /data/.probe && rm /data/.probe
 - `TG_SESSION_NO_UPDATES`: `1` 启用 `no_updates`（仅 `string` 模式）
 - `TG_GLOBAL_CONCURRENCY`: 全局并发（默认 `1`）
 - `APP_TOTP_VALID_WINDOW`: 面板 2FA 容错窗口
+- `APP_UPDATE_CHECK`: 设为 `0` 关闭检查更新（不再访问 GitHub 和镜像仓库）
+- `APP_SELF_UPDATE`: 设为 `0` 关闭一键更新（即使挂载了 docker.sock）
+- `APP_UPDATE_REPO`: 检查新版本用的 GitHub 仓库，默认 `loochenx/TG-SignPulse`
+- `APP_UPDATE_CONTAINER`: 面板所在容器的名称或 ID，自动识别失败时再填
+- `APP_UPDATE_CLEANUP`: 设为 `0` 更新后保留旧镜像（默认删除）
+- `DOCKER_HOST`: Docker 地址，默认 `unix:///var/run/docker.sock`
 
 ## 自定义数据目录
 
@@ -147,6 +153,38 @@ touch /data/.probe && rm /data/.probe
 - 点击右上角导出图标，将当前账号全部任务复制到剪贴板
 - 点击右上角"粘贴导入任务"，从剪贴板批量导入任务并跳过已存在的重复任务
 
+## 页面内更新
+
+在 `系统设置 -> 软件更新` 可以查看当前版本并检查更新（结果缓存 6 小时，可手动重新检查）。有新版本时，设置入口会出现一个提示点。
+
+### 一键更新（可选）
+
+把宿主机的 Docker socket 挂进容器，面板就能自己下载新镜像并重建容器：
+
+```yaml
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+使用 `docker run` 时加上 `-v /var/run/docker.sock:/var/run/docker.sock`。没有挂载时，面板只检查更新，并给出在服务器上手动更新的命令。
+
+点击「立即更新」后：
+
+1. 面板拉取同一标签的新镜像（如 `:latest`），镜像没变就提示已是最新
+2. 启动临时助手容器 `<容器名>-updater`，停止旧容器，按原配置创建新容器（端口、数据卷、环境变量、网络、重启策略等保持不变）
+3. 新容器正常运行后删除旧容器和旧镜像；新容器起不来时自动恢复旧容器
+4. 页面自动刷新到新版本，整个过程约 1 分钟无法访问
+
+注意事项：
+
+- **挂载 docker.sock 等于让面板拥有管理本机所有容器的权限**。开启前请修改默认密码并开启两步验证，不要把面板直接暴露在公网
+- 有任务正在运行时不能更新，请等任务结束再操作
+- 镜像仓库里找不到的镜像（如本地 `docker compose up -d --build` 构建的 `tg-signpulse:latest`）和需要登录的私有镜像无法一键更新，面板会给出手动更新命令
+- 本地构建的镜像如果与仓库中的镜像同名，一键更新会换成仓库里的版本
+- 用 `user:`（或 `docker run --user`）指定了运行用户时，还需要加上 socket 的属组：`group_add: ["<GID>"]`，GID 可用 `stat -c %g /var/run/docker.sock` 查看
+- 不需要这个功能时，不挂载 socket 或设置 `APP_SELF_UPDATE=0` 即可
+
 ## 健康检查
 
 - `GET /healthz`：快速健康检查
@@ -161,6 +199,13 @@ frontend/     Next.js 管理面板
 ```
 
 ## 更新日志
+
+### 2026-09-17（页面内更新）
+
+- **页面内检查更新**：`系统设置 -> 软件更新` 显示当前版本、最新版本和更新内容链接，有新版本时设置入口出现提示点；可通过 `APP_UPDATE_CHECK=0` 关闭。
+- **一键更新（可选）**：挂载 `/var/run/docker.sock` 后，面板可拉取新镜像并由助手容器按原配置重建自身，新容器起不来时自动回滚；未挂载时显示手动更新命令。详见「页面内更新」。
+- **前端改版为移动端优先**：列表式设置页、底部导航与底部弹层，适配手机单手操作；登录页换成品牌脉冲线装饰。
+- 镜像入口脚本在挂载 docker.sock 时，会把 socket 的属组加给运行用户。
 
 ### v0.9.0（2026-09-16）
 

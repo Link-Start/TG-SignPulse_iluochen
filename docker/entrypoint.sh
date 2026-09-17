@@ -41,6 +41,23 @@ if [ "$(id -u)" -eq 0 ]; then
   if [ "${TARGET_UID}" = "0" ] || [ "${TARGET_GID}" = "0" ]; then
     exec uvicorn backend.main:app --host 0.0.0.0 --port "${PORT_VALUE}"
   fi
+
+  # One-click update: gosu drops supplementary groups, so when a Docker socket
+  # is mounted keep its group via setpriv (the socket is usually root:docker 660).
+  case "${DOCKER_HOST:-}" in
+    unix://*) DOCKER_SOCK="${DOCKER_HOST#unix://}" ;;
+    "") DOCKER_SOCK="/var/run/docker.sock" ;;
+    *) DOCKER_SOCK="" ;;
+  esac
+  if [ -n "${DOCKER_SOCK}" ] && [ -S "${DOCKER_SOCK}" ] && command -v setpriv >/dev/null 2>&1; then
+    SOCK_GID="$(stat -c '%g' "${DOCKER_SOCK}" 2>/dev/null || true)"
+    if [ -n "${SOCK_GID}" ] && [ "${SOCK_GID}" != "${TARGET_GID}" ]; then
+      HOME="$(getent passwd "${TARGET_UID}" | cut -d: -f6)"
+      export HOME="${HOME:-/}"
+      exec setpriv --reuid="${TARGET_UID}" --regid="${TARGET_GID}" --groups="${TARGET_GID},${SOCK_GID}" \
+        uvicorn backend.main:app --host 0.0.0.0 --port "${PORT_VALUE}"
+    fi
+  fi
   exec gosu "${TARGET_UID}:${TARGET_GID}" uvicorn backend.main:app --host 0.0.0.0 --port "${PORT_VALUE}"
 fi
 

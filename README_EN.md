@@ -113,6 +113,12 @@ touch /data/.probe && rm /data/.probe
 - `TG_SESSION_NO_UPDATES`: set `1` to enable `no_updates` (`string` mode only)
 - `TG_GLOBAL_CONCURRENCY`: global concurrency limit (default `1`)
 - `APP_TOTP_VALID_WINDOW`: panel 2FA tolerance window
+- `APP_UPDATE_CHECK`: set `0` to turn off update checks (no requests to GitHub or the image registry)
+- `APP_SELF_UPDATE`: set `0` to turn off one-click update, even with docker.sock mounted
+- `APP_UPDATE_REPO`: GitHub repository used to look up the latest version (default `loochenx/TG-SignPulse`)
+- `APP_UPDATE_CONTAINER`: name or ID of the panel's container, only needed if auto-detection fails
+- `APP_UPDATE_CLEANUP`: set `0` to keep the old image after an update (removed by default)
+- `DOCKER_HOST`: Docker address (default `unix:///var/run/docker.sock`)
 
 ## Custom Data Directory
 
@@ -147,6 +153,38 @@ On the account task page, you can:
 - Click the top-right export icon to copy all tasks of the current account to the clipboard
 - Click the top-right paste/import action to bulk-import tasks from the clipboard while skipping duplicates
 
+## In-page Update
+
+`System Settings -> Software Update` shows the current version and checks for updates (cached for 6 hours; you can check again manually). When a new version is out, a dot appears on the Settings entry.
+
+### One-click Update (Optional)
+
+Mount the host's Docker socket and the panel can pull the new image and recreate its own container:
+
+```yaml
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+With `docker run`, add `-v /var/run/docker.sock:/var/run/docker.sock`. Without the socket, the panel only checks for updates and shows the commands to update on the server.
+
+After you click **Update Now**:
+
+1. The panel pulls the same tag again (e.g. `:latest`); if the image hasn't changed, it reports you're up to date
+2. A temporary helper container `<name>-updater` stops the old container and creates a new one with the same configuration (ports, volumes, environment, networks, restart policy, etc.)
+3. Once the new container is running, the old container and image are removed; if it fails to start, the old container is restored
+4. The page reloads on the new version. The panel is unreachable for about a minute
+
+Notes:
+
+- **Mounting docker.sock gives the panel control over every container on the host.** Change the default password and turn on two-step verification first, and don't expose the panel directly to the internet
+- Updates are blocked while a task is running
+- Images the registry doesn't have (such as `tg-signpulse:latest` built locally with `docker compose up -d --build`) and private images that need a login can't be updated in one click; the panel shows the manual commands instead
+- If a locally built image shares its name with a registry image, one-click update replaces it with the registry version
+- If you set `user:` (or `docker run --user`), also add the socket's group: `group_add: ["<GID>"]`, where the GID comes from `stat -c %g /var/run/docker.sock`
+- To opt out, don't mount the socket, or set `APP_SELF_UPDATE=0`
+
 ## Health Checks
 
 - `GET /healthz`: quick health endpoint
@@ -161,6 +199,13 @@ frontend/     Next.js management panel
 ```
 
 ## Changelog
+
+### 2026-09-17 (In-page Update)
+
+- **In-page update check**: `System Settings -> Software Update` shows the current and latest versions with a link to the changes, and a dot appears on Settings when an update is available. Turn it off with `APP_UPDATE_CHECK=0`.
+- **One-click update (optional)**: with `/var/run/docker.sock` mounted, the panel pulls the new image and a helper container recreates it with the same configuration, rolling back if the new container fails to start. Without the socket, manual commands are shown. See "In-page Update".
+- **Mobile-first redesign**: list-style settings, bottom navigation and bottom sheets for one-handed use; the sign-in page now uses the brand pulse line.
+- When docker.sock is mounted, the image entrypoint adds the socket's group to the runtime user.
 
 ### v0.9.0 (2026-09-16)
 
