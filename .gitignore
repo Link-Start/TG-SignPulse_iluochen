@@ -133,8 +133,8 @@ frontend/tsconfig.tsbuildinfo
 frontend/.env.local
 
 
-# Claude Code worktrees (temporary per-session checkouts)
-.claude/worktrees/
+# Claude Code local configuration and worktrees
+.claude/
 
 # Impeccable 设计过程文件（mock、截图、方向文档）
 .impeccable/
