@@ -61,7 +61,7 @@ docker run -d \
   -v $(pwd)/data:/data \
   -e TZ=Asia/Shanghai \
   -e APP_SECRET_KEY=your_secret_key \
-  ghcr.io/akasls/tg-signpulse:latest
+  luochend/tg-signpulse:latest
 ```
 
 If you use a reverse proxy, bind locally only:
@@ -75,7 +75,7 @@ If you use a reverse proxy, bind locally only:
 ```yaml
 services:
   app:
-    image: ghcr.io/akasls/tg-signpulse:latest
+    image: luochend/tg-signpulse:latest
     container_name: tg-signpulse
     restart: unless-stopped
     ports:

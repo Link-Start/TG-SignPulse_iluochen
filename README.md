@@ -61,7 +61,7 @@ docker run -d \
   -v $(pwd)/data:/data \
   -e TZ=Asia/Shanghai \
   -e APP_SECRET_KEY=your_secret_key \
-  ghcr.io/akasls/tg-signpulse:latest
+  luochend/tg-signpulse:latest
 ```
 
 如果你走反代（如 Nginx），可改成仅本机监听：
@@ -75,7 +75,7 @@ docker run -d \
 ```yaml
 services:
   app:
-    image: ghcr.io/akasls/tg-signpulse:latest
+    image: luochend/tg-signpulse:latest
     container_name: tg-signpulse
     restart: unless-stopped
     ports:
