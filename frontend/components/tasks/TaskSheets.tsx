@@ -109,6 +109,7 @@ export function TaskActionSheet({
   onToggle,
   onHistory,
   onLatestLog,
+  onViewRun,
   onEdit,
   onDelete,
 }: {
@@ -123,6 +124,7 @@ export function TaskActionSheet({
   onToggle: (task: SignTask) => void;
   onHistory: (task: SignTask) => void;
   onLatestLog: (task: SignTask) => void;
+  onViewRun: (task: SignTask) => void;
   onEdit: (task: SignTask) => void;
   onDelete: (task: SignTask) => void;
 }) {
@@ -153,6 +155,8 @@ export function TaskActionSheet({
             <ListRow title={t("task_next_run")} value={<span className="num">{describeNextRun(task, t)}</span>} />
             <ListRow
               title={t("task_last_run")}
+              chevron={Boolean(task.last_run)}
+              onClick={task.last_run ? () => onLatestLog(task) : undefined}
               value={
                 task.last_run ? (
                   <span className={cn("num", task.last_run.success ? "text-success" : "text-danger")}>
@@ -168,23 +172,16 @@ export function TaskActionSheet({
 
           <ListSection>
             <ListRow
-              icon={<Play size={20} weight="fill" className="text-accent-text" />}
-              title={running ? t("task_running") : t("manual_run")}
+              icon={running ? <Terminal size={22} className="text-accent-text" /> : <Play size={20} weight="fill" className="text-accent-text" />}
+              title={running ? t("view_live_logs") : t("manual_run")}
               tone="accent"
-              disabled={running}
-              onClick={() => onRun(task)}
+              onClick={() => running ? onViewRun(task) : onRun(task)}
             />
             <ListRow
               icon={<ClockCounterClockwise size={22} className="text-accent-text" />}
               title={t("task_history")}
               chevron
               onClick={() => onHistory(task)}
-            />
-            <ListRow
-              icon={<Terminal size={22} className="text-accent-text" />}
-              title={t("task_logs")}
-              chevron
-              onClick={() => onLatestLog(task)}
             />
             <ListRow
               icon={<PencilSimple size={22} className="text-accent-text" />}
@@ -289,7 +286,7 @@ export function TaskHistorySheet({
   onClose,
 }: {
   task: SignTask | null;
-  /** history：列表，可点进单条；latest：直接展示最近一次 */
+  /** 初始视图：列表，或最近一次详情；详情均可返回完整列表 */
   mode: "history" | "latest";
   items: SignTaskHistoryItem[];
   loading: boolean;
@@ -297,18 +294,18 @@ export function TaskHistorySheet({
   t: T;
   onClose: () => void;
 }) {
-  const [selected, setSelected] = useState<SignTaskHistoryItem | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!task) setSelected(null);
-  }, [task]);
+    setSelected(task && mode === "latest" ? 0 : null);
+  }, [task, mode]);
 
-  const detail = mode === "latest" ? items[0] || null : selected;
+  const detail = selected === null ? null : items[selected] || null;
   const showingDetail = Boolean(detail);
 
   const title = task
-    ? mode === "latest"
-      ? fmt(t("task_logs_title"), { name: task.name })
+    ? showingDetail
+      ? fmt(t("task_run_detail_title"), { name: task.name })
       : fmt(t("task_history_title"), { name: task.name })
     : "";
 
@@ -317,8 +314,6 @@ export function TaskHistorySheet({
       {formatTime(detail.time, language, true)}
       <ResultBadge success={detail.success} t={t} />
     </span>
-  ) : mode === "history" && items.length > 0 ? (
-    t("task_history_hint")
   ) : undefined;
 
   return (
@@ -328,9 +323,9 @@ export function TaskHistorySheet({
       title={title}
       subtitle={subtitle}
       size={showingDetail ? "lg" : "md"}
-      tall={showingDetail || mode === "latest"}
+      tall={showingDetail}
       headerAction={
-        mode === "history" && selected ? (
+        showingDetail ? (
           <button type="button" onClick={() => setSelected(null)} className="btn btn-sm btn-gray gap-0.5 pl-2.5">
             <CaretLeft size={14} weight="bold" aria-hidden />
             {t("task_history")}
@@ -347,7 +342,7 @@ export function TaskHistorySheet({
       ) : items.length === 0 ? (
         <EmptyState
           icon={<ClockCounterClockwise size={36} />}
-          title={mode === "latest" ? t("task_logs_empty") : t("task_history_empty")}
+          title={t("task_history_empty")}
         />
       ) : (
         <ListSection>
@@ -365,7 +360,7 @@ export function TaskHistorySheet({
               subtitle={item.message ? <span className="line-clamp-1">{item.message}</span> : undefined}
               value={item.success ? t("success") : t("failure")}
               chevron
-              onClick={() => setSelected(item)}
+              onClick={() => setSelected(index)}
             />
           ))}
         </ListSection>

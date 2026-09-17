@@ -233,7 +233,7 @@ export default function TasksHomePage() {
     setHistoryItems([]);
     setHistoryLoading(true);
     try {
-      setHistoryItems(await getSignTaskHistory(token, task.name, task.account_name, mode === "latest" ? 1 : 30));
+      setHistoryItems(await getSignTaskHistory(token, task.name, task.account_name, 30));
     } catch (err: any) {
       addToast(formatError(t, "logs_fetch_failed", err), "error");
     } finally {
@@ -241,11 +241,15 @@ export default function TasksHomePage() {
     }
   };
 
-  const handleRunFromSheet = (task: SignTask) => {
+  const viewRunFromSheet = (task: SignTask) => {
     setActionTaskKey(null);
     const key = taskKey(task);
     setViewingRunKey(key);
     setViewing(key);
+  };
+
+  const handleRunFromSheet = (task: SignTask) => {
+    viewRunFromSheet(task);
     start(task);
   };
 
@@ -596,6 +600,7 @@ export default function TasksHomePage() {
         onToggle={handleToggle}
         onHistory={(task) => openHistory(task, "history")}
         onLatestLog={(task) => openHistory(task, "latest")}
+        onViewRun={viewRunFromSheet}
         onEdit={(task) => router.push(editHref(task))}
         onDelete={handleDelete}
       />
